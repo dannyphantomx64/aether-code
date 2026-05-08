@@ -1,0 +1,38 @@
+{
+  "name": "aether-code",
+  "version": "0.3.0",
+  "description": "Uncensored AI coding agent for your terminal. Type `aether` to launch the interactive REPL — like Claude Code, with no refusal layer.",
+  "homepage": "https://trynoguard.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dannyphantomx64/aether-code"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "aether": "bin/aether-code.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "lint": "node --check bin/aether-code.js src/agent.js src/api.js src/config.js src/render.js src/tools.js src/diff.js src/repl.js"
+  },
+  "keywords": [
+    "aether",
+    "uncensored",
+    "ai",
+    "coding-agent",
+    "claude-code-alternative",
+    "agent",
+    "cli",
+    "tool-use",
+    "agentic"
+  ]
+}

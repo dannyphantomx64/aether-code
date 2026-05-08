@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Local env (NEVER commit these)
+.env
+.env.local
+.env.*.local
+*.env
+.envrc
+
+# Editor / OS junk
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# npm pack output
+*.tgz
+
+# Cache
+.npm/
+.cache/
+.npmrc
