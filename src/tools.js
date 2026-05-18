@@ -14,6 +14,7 @@ import readline from "node:readline";
 import { spawn } from "node:child_process";
 import { c } from "./render.js";
 import { unifiedDiff, summarizeWrite } from "./diff.js";
+import { getConfig } from "./config.js";
 
 /* ─────────────────────── Tool definitions (sent to model) ─────────────────────── */
 
@@ -115,6 +116,67 @@ export const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description:
+        "Search the live web for a query and return a JSON array of {title, url, snippet} results. Use this to find current docs, recent libraries, API references, or anything that may have changed since training. ALWAYS prefer this over guessing at library APIs. Cost: ~3–8 credits per call.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Plain-language search query." },
+          max_results: { type: "number", description: "How many results to return (1–10, default 5)." },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "web_fetch",
+      description:
+        "Fetch a URL and return its content as plain text (HTML scripts/styles stripped, tags removed, entities decoded). Use this after web_search to read the actual docs page. NEVER pass a URL you didn't get from a real source — only http:// or https:// is allowed. Caps response at 50 KB of text.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "Full http(s) URL to fetch." },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "todo_write",
+      description:
+        "Replace the current todo list with a new state. Use this at the start of any task with 3+ steps to plan upfront, then call again to mark items 'in_progress' as you start them and 'completed' as you finish. Visible progress for the user; structural discipline for you. Status must be one of: 'pending', 'in_progress', 'completed'. Max 30 items per list.",
+      parameters: {
+        type: "object",
+        properties: {
+          todos: {
+            type: "array",
+            description: "Full replacement list (latest-wins semantics).",
+            items: {
+              type: "object",
+              properties: {
+                content: { type: "string", description: "Short imperative phrase, e.g. 'wire endpoint into UI'." },
+                status: {
+                  type: "string",
+                  enum: ["pending", "in_progress", "completed"],
+                  description: "Task status.",
+                },
+              },
+              required: ["content", "status"],
+            },
+          },
+        },
+        required: ["todos"],
+      },
+    },
+  },
 ];
 
 /* ─────────────────────── Helpers ─────────────────────── */
@@ -169,6 +231,9 @@ export async function executeTool(call, opts) {
     write_file: () => writeFile(args, opts),
     edit_file: () => editFile(args, opts),
     run_shell: () => runShell(args, opts),
+    web_search: () => webSearch(args, opts),
+    web_fetch: () => webFetch(args, opts),
+    todo_write: () => todoWrite(args, opts),
   };
   const fn = handlers[name];
   if (!fn) {
@@ -309,6 +374,123 @@ async function editFile(args, opts) {
   return { ok: true, output: `Edited ${path.relative(opts.cwd, abs)}` };
 }
 
+/* ─────────────────────── Web tools ─────────────────────── */
+
+async function webSearch(args, opts) {
+  void opts;
+  if (typeof args.query !== "string") return { ok: false, output: "query is required" };
+  const { apiKey, baseUrl } = getConfig();
+  if (!apiKey) {
+    return { ok: false, output: "Web search requires AETHER_API_KEY. Set it and try again." };
+  }
+  const max = Number.isInteger(args.max_results) ? Math.min(10, Math.max(1, args.max_results)) : 5;
+  let res;
+  try {
+    res = await fetch(`${baseUrl}/api/v1/web-search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "User-Agent": "aether-code/web-search",
+      },
+      body: JSON.stringify({ query: args.query, max_results: max }),
+    });
+  } catch (e) {
+    return { ok: false, output: `web_search network error: ${e.message}` };
+  }
+  let data = null;
+  try { data = await res.json(); } catch { /* non-JSON */ }
+  if (!res.ok) {
+    return { ok: false, output: data?.error || `web_search HTTP ${res.status}` };
+  }
+  // Hand the model just the array — that's all it needs to decide which URL to fetch.
+  return { ok: true, output: JSON.stringify(data.results ?? [], null, 2) };
+}
+
+// Bounded fetch with a fixed timeout + size cap. Strips scripts/styles, removes
+// tags, decodes common HTML entities. Not a full HTML parser; good enough for
+// reading docs pages, GitHub READMEs, MDN, Stack Overflow answers, etc.
+async function webFetch(args, opts) {
+  void opts;
+  if (typeof args.url !== "string") return { ok: false, output: "url is required" };
+  if (!/^https?:\/\//i.test(args.url)) {
+    return { ok: false, output: "Only http:// and https:// URLs are allowed." };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  let res;
+  try {
+    res = await fetch(args.url, {
+      signal: controller.signal,
+      redirect: "follow",
+      headers: {
+        // Looking like a normal browser dodges many anti-bot pages.
+        "User-Agent":
+          "Mozilla/5.0 (compatible; aether-code/0.7) Gecko/20100101 Firefox/130.0",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    });
+  } catch (e) {
+    clearTimeout(timeout);
+    return { ok: false, output: `web_fetch error: ${e.name === "AbortError" ? "timed out after 15s" : e.message}` };
+  }
+  clearTimeout(timeout);
+  if (!res.ok) {
+    return { ok: false, output: `web_fetch HTTP ${res.status} ${res.statusText}` };
+  }
+  // Cap at 2 MB of raw HTML before stripping — page might be huge.
+  const reader = res.body?.getReader();
+  if (!reader) return { ok: false, output: "Response had no body." };
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > 2_000_000) {
+      reader.cancel();
+      break;
+    }
+    chunks.push(value);
+  }
+  const html = new TextDecoder("utf-8", { fatal: false }).decode(
+    Buffer.concat(chunks.map((c) => Buffer.from(c.buffer, c.byteOffset, c.byteLength))),
+  );
+  const text = htmlToText(html);
+  // Final cap on what we hand to the model so a single fetch doesn't blow the context.
+  const capped = text.length > 50_000 ? text.slice(0, 50_000) + "\n…(truncated; page was longer)" : text;
+  return { ok: true, output: capped };
+}
+
+export function htmlToText(html) {
+  let s = html;
+  // Drop script/style blocks entirely.
+  s = s.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ");
+  s = s.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ");
+  s = s.replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, " ");
+  // Preserve paragraph + heading breaks.
+  s = s.replace(/<\/(p|div|h[1-6]|li|tr|br)\s*>/gi, "\n");
+  s = s.replace(/<br\s*\/?>/gi, "\n");
+  // Strip remaining tags.
+  s = s.replace(/<[^>]+>/g, "");
+  // Decode common HTML entities (covers ~95% of real-world cases).
+  const entities = {
+    "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'",
+    "&apos;": "'", "&nbsp;": " ", "&mdash;": "—", "&ndash;": "–",
+    "&hellip;": "…", "&copy;": "©", "&reg;": "®", "&trade;": "™",
+  };
+  for (const [ent, ch] of Object.entries(entities)) {
+    s = s.split(ent).join(ch);
+  }
+  s = s.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)));
+  s = s.replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)));
+  // Collapse whitespace.
+  s = s.replace(/[ \t]+/g, " ");
+  s = s.replace(/\n\s*\n\s*\n+/g, "\n\n");
+  return s.trim();
+}
+
 async function runShell(args, opts) {
   if (typeof args.command !== "string") return { ok: false, output: "command is required" };
   const cwd = args.cwd ? resolveSafe(args.cwd, opts) : opts.cwd;
@@ -354,4 +536,86 @@ async function runShell(args, opts) {
       resolve({ ok: code === 0 && !killed, output: out });
     });
   });
+}
+
+/* ─────────────────────── todo_write ─────────────────────── */
+
+// Module-level singleton holding the current todo list for this CLI session.
+// Latest-wins: each todo_write call replaces the entire list. The model
+// passes the full new state every time, mirroring what Claude Code's
+// TodoWrite does. Simpler than incremental ops; gives the model full
+// control over ordering and renames.
+const VALID_TODO_STATUSES = new Set(["pending", "in_progress", "completed"]);
+const MAX_TODOS = 30;
+let todoState = [];
+
+// Test-only escape hatches — exported so the test suite can reset state
+// between cases. Production code never touches these.
+export function __resetTodoState() {
+  todoState = [];
+}
+export function __getTodoState() {
+  return todoState.map((t) => ({ ...t }));
+}
+
+function todoWrite(args, opts) {
+  void opts;
+  if (!Array.isArray(args.todos)) {
+    return { ok: false, output: "todos must be an array" };
+  }
+  if (args.todos.length > MAX_TODOS) {
+    return {
+      ok: false,
+      output: `too many todos (${args.todos.length}) — max ${MAX_TODOS}. Keep the plan focused.`,
+    };
+  }
+  // Validate every item BEFORE mutating state — we don't want a partial write.
+  for (let i = 0; i < args.todos.length; i++) {
+    const t = args.todos[i];
+    if (!t || typeof t !== "object") {
+      return { ok: false, output: `todo[${i}] must be an object` };
+    }
+    if (typeof t.content !== "string" || t.content.trim().length === 0) {
+      return { ok: false, output: `todo[${i}] needs a non-empty content string` };
+    }
+    if (!VALID_TODO_STATUSES.has(t.status)) {
+      return {
+        ok: false,
+        output: `todo[${i}] invalid status: "${t.status}" — must be pending, in_progress, or completed`,
+      };
+    }
+  }
+  todoState = args.todos.map((t) => ({
+    content: t.content.trim(),
+    status: t.status,
+  }));
+  renderTodos(todoState);
+  const counts = { pending: 0, in_progress: 0, completed: 0 };
+  for (const t of todoState) counts[t.status]++;
+  return {
+    ok: true,
+    output: `Todos updated: ${counts.pending} pending, ${counts.in_progress} in_progress, ${counts.completed} completed.`,
+  };
+}
+
+function renderTodos(todos) {
+  if (!process.stdout.isTTY) return; // skip render in non-TTY (CI, piped, tests)
+  console.log("");
+  console.log(c.dim("─── Plan ───"));
+  for (const t of todos) {
+    const icon =
+      t.status === "completed"
+        ? c.green("✓")
+        : t.status === "in_progress"
+          ? c.yellow("▶")
+          : c.dim("○");
+    const text =
+      t.status === "completed"
+        ? c.dim(t.content)
+        : t.status === "in_progress"
+          ? c.bold(t.content)
+          : t.content;
+    console.log(`  ${icon} ${text}`);
+  }
+  console.log("");
 }
