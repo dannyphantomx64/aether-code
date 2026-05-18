@@ -14,9 +14,43 @@ import { runRepl } from "../src/repl.js";
 import { runSetup } from "../src/setup.js";
 import { fetchBalance, AetherError } from "../src/api.js";
 import { writeConfigFile, getConfig, CONFIG_PATH } from "../src/config.js";
+import { loadMcpConfig, MCPManager } from "../src/mcp.js";
 import { c, errorLine, divider } from "../src/render.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.9.0";
+
+/**
+ * Try to start MCP servers from ~/.aether/mcp.json. Returns a started
+ * MCPManager (possibly with zero servers) or null if no config exists.
+ * Prints a one-line summary so the user can see what attached.
+ */
+async function bootMcp() {
+  let config;
+  try {
+    config = loadMcpConfig();
+  } catch (e) {
+    console.log(errorLine(`MCP config: ${e.message}`));
+    return null;
+  }
+  if (!config) return null;
+  const manager = new MCPManager();
+  const started = await manager.start(config);
+  const requested = Object.keys(config.mcpServers).length;
+  const failed = manager.startErrors.length;
+  if (started > 0 || failed > 0) {
+    const parts = [`${c.cyan("MCP")}`, `${started}/${requested} servers attached`];
+    const toolCount = manager.getToolDefinitions().length;
+    if (toolCount > 0) parts.push(`${toolCount} tools`);
+    console.log(c.gray(parts.join(" · ")));
+    for (const { serverName, error } of manager.startErrors) {
+      console.log(c.gray(`  ${c.yellow("!")} ${serverName}: ${error}`));
+    }
+  }
+  // Best-effort cleanup so child processes don't leak on normal exit.
+  process.on("exit", () => { manager.shutdown().catch(() => {}); });
+  process.on("SIGINT", () => { manager.shutdown().catch(() => {}); process.exit(130); });
+  return manager;
+}
 
 const HELP = `${c.bold("aether")} — uncensored AI coding agent
 
@@ -128,7 +162,8 @@ async function main() {
   // No task → drop into interactive REPL (Claude-CLI-style)
   if (!prompt) {
     if (cwd !== process.cwd()) process.chdir(cwd);
-    await runRepl({ cwd, autoYes, maxTurns });
+    const mcpManager = await bootMcp();
+    await runRepl({ cwd, autoYes, maxTurns, mcpManager });
     return;
   }
 
@@ -144,13 +179,16 @@ async function main() {
   console.log(c.gray(`task: `) + prompt);
   console.log(divider());
 
+  const mcpManager = await bootMcp();
   const result = await runAgent({
     initialPrompt: prompt,
     cwd,
     autoYes,
     unsafePaths,
     maxTurns,
+    mcpManager,
   });
+  if (mcpManager) await mcpManager.shutdown().catch(() => {});
 
   console.log("\n" + divider());
   if (result.ok) {

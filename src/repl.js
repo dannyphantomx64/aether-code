@@ -32,7 +32,7 @@ ${c.gray("Anything else is sent to the agent as your next message.")}
 ${c.gray("Conversation history is kept across messages until you /clear.")}
 `;
 
-export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTurns: initialMaxTurns }) {
+export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTurns: initialMaxTurns, mcpManager = null }) {
   const state = {
     cwd: initialCwd,
     autoYes: !!initialAutoYes,
@@ -125,6 +125,7 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTur
       cwd: state.cwd,
       autoYes: state.autoYes,
       maxTurns: state.maxTurns,
+      mcpManager,
     });
 
     state.sessionCredits += result.totalCredits ?? 0;

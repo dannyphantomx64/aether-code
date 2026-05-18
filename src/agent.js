@@ -4,6 +4,7 @@
 
 import { agentTurnStream, AetherError } from "./api.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools.js";
+import { unnamespaceToolName } from "./mcp.js";
 import { c, divider, turn, toolHeader, toolResult, errorLine } from "./render.js";
 
 const DEFAULT_MAX_TURNS = 25;
@@ -16,7 +17,17 @@ export async function runAgent({
   unsafePaths = false,
   maxTurns = DEFAULT_MAX_TURNS,
   onTokens = () => {},
+  // Optional MCPManager. When provided, its tools are merged into the agent's
+  // toolset and tool calls prefixed `mcp__` are routed to it instead of the
+  // built-in executeTool.
+  mcpManager = null,
 }) {
+  // Merge built-in tools with MCP-provided tools. MCP tools come second so
+  // any name collision (unlikely given namespacing, but defense in depth)
+  // resolves to the built-in.
+  const tools = mcpManager
+    ? [...TOOL_DEFINITIONS, ...mcpManager.getToolDefinitions()]
+    : TOOL_DEFINITIONS;
   // Two callers: one-shot (initialPrompt only, fresh conversation) and REPL
   // (priorMessages + initialPrompt to continue an ongoing chat).
   const messages = priorMessages
@@ -40,7 +51,7 @@ export async function runAgent({
     try {
       res = await agentTurnStream({
         messages,
-        tools: TOOL_DEFINITIONS,
+        tools,
         onDelta: (text) => {
           if (!lastWasText) {
             process.stdout.write("  ");
@@ -96,7 +107,15 @@ export async function runAgent({
       console.log("");
       console.log(toolHeader(call.function.name, args));
 
-      const result = await executeTool(call, { cwd, autoYes, unsafePaths });
+      // Route to MCP if the tool name is namespaced (mcp__server__tool);
+      // otherwise execute the built-in tool. unnamespaceToolName returns
+      // null for non-MCP names, which is our cheap dispatch test.
+      let result;
+      if (mcpManager && unnamespaceToolName(call.function.name)) {
+        result = await mcpManager.callTool(call.function.name, args);
+      } else {
+        result = await executeTool(call, { cwd, autoYes, unsafePaths });
+      }
       if (result.output) {
         const preview = result.output.length > 800 ? result.output.slice(0, 800) + "\n…(truncated)" : result.output;
         console.log(toolResult(preview, result.ok));
