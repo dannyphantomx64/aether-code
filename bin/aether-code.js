@@ -15,9 +15,10 @@ import { runSetup } from "../src/setup.js";
 import { fetchBalance, AetherError } from "../src/api.js";
 import { writeConfigFile, getConfig, CONFIG_PATH } from "../src/config.js";
 import { loadMcpConfig, MCPManager } from "../src/mcp.js";
+import { addServer, removeServer, listServers } from "../src/mcp-cli.js";
 import { c, errorLine, divider } from "../src/render.js";
 
-const VERSION = "0.9.0";
+const VERSION = "0.10.0";
 
 /**
  * Try to start MCP servers from ~/.aether/mcp.json. Returns a started
@@ -64,6 +65,7 @@ ${c.bold("SUBCOMMANDS")}
   ${c.cyan("logout")}                               Clear saved API key
   ${c.cyan("balance")}                              Show plan + credit balance
   ${c.cyan("config")} show|set|set-base|path        Manage config file
+  ${c.cyan("mcp")} list|add|remove                  Manage MCP server connections
 
 ${c.bold("EXAMPLES")}
   aether                               # interactive REPL
@@ -154,6 +156,10 @@ async function main() {
   }
   if (sub === "balance") {
     await handleBalance();
+    return;
+  }
+  if (sub === "mcp") {
+    await handleMcp(args._.slice(1));
     return;
   }
 
@@ -257,6 +263,95 @@ async function handleBalance() {
       die(err.message || String(err));
     }
   }
+}
+
+async function handleMcp(rest) {
+  const sub = (rest[0] || "list").toLowerCase();
+
+  if (sub === "list" || sub === "ls") {
+    const servers = listServers();
+    if (servers.length === 0) {
+      console.log(c.gray("No MCP servers configured."));
+      console.log(c.gray("Add one with:"));
+      console.log(c.gray("  aether mcp add <name> -- <command> [args...]"));
+      console.log(c.gray("Example:"));
+      console.log(
+        c.gray('  aether mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /path'),
+      );
+      return;
+    }
+    console.log(c.bold(`Configured MCP servers (${servers.length}):`));
+    for (const [name, cfg] of servers) {
+      const argsStr = cfg.args && cfg.args.length > 0 ? " " + cfg.args.join(" ") : "";
+      console.log(`  ${c.cyan(name)}: ${cfg.command}${argsStr}`);
+      if (cfg.env && Object.keys(cfg.env).length > 0) {
+        for (const [k, v] of Object.entries(cfg.env)) {
+          console.log(c.gray(`    env ${k}=${v}`));
+        }
+      }
+    }
+    return;
+  }
+
+  if (sub === "add") {
+    // Syntax: aether mcp add <name> [--env KEY=VAL]... -- <command> [args...]
+    const tail = rest.slice(1);
+    const dashIdx = tail.indexOf("--");
+    if (dashIdx === -1) {
+      die(
+        'Usage: aether mcp add <name> [--env KEY=VAL]... -- <command> [args...]\n' +
+          'Example: aether mcp add fs -- npx -y @modelcontextprotocol/server-filesystem /tmp',
+      );
+    }
+    const pre = tail.slice(0, dashIdx);
+    const post = tail.slice(dashIdx + 1);
+    const name = pre[0];
+    if (!name) die("aether mcp add: missing <name>");
+    if (post.length === 0) die("aether mcp add: missing <command> after '--'");
+
+    const env = {};
+    for (let i = 1; i < pre.length; i++) {
+      if (pre[i] === "--env") {
+        const kv = pre[++i];
+        if (!kv) die("--env needs a KEY=VAL argument");
+        const eq = kv.indexOf("=");
+        if (eq <= 0) die(`--env value must be KEY=VAL, got: ${kv}`);
+        env[kv.slice(0, eq)] = kv.slice(eq + 1);
+      } else {
+        die(`aether mcp add: unrecognized option "${pre[i]}" before the '--' separator`);
+      }
+    }
+
+    const command = post[0];
+    const cmdArgs = post.slice(1);
+    try {
+      const entry = addServer({ name, command, args: cmdArgs, env });
+      console.log(`${c.green("✓")} Added MCP server "${c.cyan(name)}".`);
+      const argsStr = entry.args && entry.args.length > 0 ? " " + entry.args.join(" ") : "";
+      console.log(c.gray(`  ${entry.command}${argsStr}`));
+      console.log(c.gray("Restart the agent (or run `aether`) to attach it."));
+    } catch (e) {
+      die(e.message || String(e));
+    }
+    return;
+  }
+
+  if (sub === "remove" || sub === "rm" || sub === "delete") {
+    const name = rest[1];
+    if (!name) die("aether mcp remove: missing <name>");
+    try {
+      removeServer({ name });
+      console.log(`${c.green("✓")} Removed MCP server "${c.cyan(name)}".`);
+    } catch (e) {
+      die(e.message || String(e));
+    }
+    return;
+  }
+
+  die(
+    `aether mcp: unknown subcommand "${sub}".\n` +
+      "Try one of: list, add, remove.",
+  );
 }
 
 main().catch((err) => {
