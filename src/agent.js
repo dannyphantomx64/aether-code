@@ -5,6 +5,7 @@
 import { agentTurnStream, AetherError } from "./api.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools.js";
 import { unnamespaceToolName } from "./mcp.js";
+import { loadAllSkills, selectSkills, renderSkillsBlock } from "./skills.js";
 import { c, divider, turn, toolHeader, toolResult, errorLine } from "./render.js";
 
 const DEFAULT_MAX_TURNS = 25;
@@ -28,6 +29,18 @@ export async function runAgent({
   const tools = mcpManager
     ? [...TOOL_DEFINITIONS, ...mcpManager.getToolDefinitions()]
     : TOOL_DEFINITIONS;
+
+  // Load skills once per runAgent call (bundled + user-installed). They
+  // get selected per-turn against the current prompt + any file paths the
+  // model has read so far. Loading errors are non-fatal — a bad skill file
+  // shouldn't kill the agent.
+  let allSkills = [];
+  try {
+    allSkills = loadAllSkills();
+  } catch (e) {
+    process.stderr.write(c.yellow(`(skill load failed: ${e.message})\n`));
+  }
+  const referencedPaths = [];
   // Two callers: one-shot (initialPrompt only, fresh conversation) and REPL
   // (priorMessages + initialPrompt to continue an ongoing chat).
   const messages = priorMessages
@@ -47,10 +60,17 @@ export async function runAgent({
     const announced = new Set();
     let lastWasText = false;
 
+    // Select skills for this turn against the current user prompt + any
+    // paths the model has read so far. Prepend the matching skills' bodies
+    // to the last user message of a shallow-cloned messages array — we
+    // don't want skill text accumulating in the persisted history, only
+    // being available to the model for the turn where it's relevant.
+    const turnMessages = buildTurnMessages(messages, allSkills, referencedPaths);
+
     let res;
     try {
       res = await agentTurnStream({
-        messages,
+        messages: turnMessages,
         tools,
         onDelta: (text) => {
           if (!lastWasText) {
@@ -116,6 +136,13 @@ export async function runAgent({
       } else {
         result = await executeTool(call, { cwd, autoYes, unsafePaths });
       }
+
+      // Track paths the model has touched. Skills with path-pattern triggers
+      // (e.g. RE skill on `*.exe`) match against this list, so reading a
+      // binary in turn 3 can activate the RE skill in turn 4.
+      if (call.function.name === "read_file" || call.function.name === "edit_file" || call.function.name === "write_file") {
+        if (typeof args.path === "string") referencedPaths.push(args.path);
+      }
       if (result.output) {
         const preview = result.output.length > 800 ? result.output.slice(0, 800) + "\n…(truncated)" : result.output;
         console.log(toolResult(preview, result.ok));
@@ -131,4 +158,40 @@ export async function runAgent({
 
   console.log(c.yellow(`\nReached max turns (${maxTurns}). Stopping.`));
   return { ok: false, error: new Error("Max turns reached"), totalCredits, totalIn, totalOut, balance: lastBalance, messages };
+}
+
+/**
+ * Per-turn skill injection. Selects skills against the latest user message
+ * + paths the model has touched, then prepends matching bodies onto the
+ * final user message of a shallow-cloned messages array. Returns the
+ * original array unchanged when no skills match — zero overhead on the
+ * no-skills path.
+ *
+ * Why prepend to user message instead of inserting a system message:
+ * the server's AGENT_SYSTEM check skips its own system prompt when ANY
+ * system message is present in the request. Adding a skills system
+ * message would silently delete the server's discipline — which is
+ * worse than no skills at all. Prepending into the user message keeps
+ * both layers active.
+ */
+function buildTurnMessages(messages, allSkills, referencedPaths) {
+  if (allSkills.length === 0) return messages;
+  // Find the latest user message — that's where the current task lives.
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") { lastUserIdx = i; break; }
+  }
+  if (lastUserIdx === -1) return messages;
+  const prompt = typeof messages[lastUserIdx].content === "string"
+    ? messages[lastUserIdx].content
+    : "";
+  const active = selectSkills({ skills: allSkills, prompt, referencedPaths });
+  if (active.length === 0) return messages;
+  const block = renderSkillsBlock(active);
+  const cloned = [...messages];
+  cloned[lastUserIdx] = {
+    ...cloned[lastUserIdx],
+    content: `${block}\n\n---\n\n${prompt}`,
+  };
+  return cloned;
 }

@@ -18,7 +18,7 @@ import { loadMcpConfig, MCPManager } from "../src/mcp.js";
 import { addServer, removeServer, listServers } from "../src/mcp-cli.js";
 import { c, errorLine, divider } from "../src/render.js";
 
-const VERSION = "0.10.0";
+const VERSION = "0.11.0";
 
 /**
  * Try to start MCP servers from ~/.aether/mcp.json. Returns a started
