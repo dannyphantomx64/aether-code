@@ -78,11 +78,26 @@ aether balance        # check credits
 Configure servers with one command — no JSON editing:
 
 ```bash
-aether mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /data
+# Browse the curated registry
+aether mcp search browser
+aether mcp search             # everything available
+
+# One-command install for well-known servers (interactive prompts for any required values)
+aether mcp install filesystem      # prompts for the path
+aether mcp install playwright      # no inputs needed — just installs
+aether mcp install github          # prompts for your GitHub token
+aether mcp install postgres        # prompts for connection string
+
+# Manual install for anything else (e.g. local Python servers like IDA Pro)
 aether mcp add ida --env IDA_PATH=/opt/ida -- python -m ida_pro_mcp
-aether mcp add playwright -- npx -y @playwright/mcp
+aether mcp add roblox -- npx -y robloxstudio-mcp
+
+# Inspect + manage
 aether mcp list
+aether mcp remove ida
 ```
+
+Built-in registry covers the official MCP servers (filesystem, github, gitlab, postgres, sqlite, puppeteer, playwright, slack, google-drive, fetch, memory, everart). For Python-based or community servers, use `aether mcp add` with the full command.
 
 On the next `aether` launch you'll see:
 

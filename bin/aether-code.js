@@ -16,9 +16,17 @@ import { fetchBalance, AetherError } from "../src/api.js";
 import { writeConfigFile, getConfig, CONFIG_PATH } from "../src/config.js";
 import { loadMcpConfig, MCPManager } from "../src/mcp.js";
 import { addServer, removeServer, listServers } from "../src/mcp-cli.js";
+import {
+  MCP_REGISTRY,
+  findRegistryEntry,
+  resolveEntry,
+  searchRegistry,
+  suggestSimilar,
+} from "../src/mcp-registry.js";
+import readline from "node:readline";
 import { c, errorLine, divider } from "../src/render.js";
 
-const VERSION = "0.11.1";
+const VERSION = "0.12.0";
 
 /**
  * Try to start MCP servers from ~/.aether/mcp.json. Returns a started
@@ -65,7 +73,7 @@ ${c.bold("SUBCOMMANDS")}
   ${c.cyan("logout")}                               Clear saved API key
   ${c.cyan("balance")}                              Show plan + credit balance
   ${c.cyan("config")} show|set|set-base|path        Manage config file
-  ${c.cyan("mcp")} list|add|remove                  Manage MCP server connections
+  ${c.cyan("mcp")} list|search|install|add|remove   Manage MCP server connections
 
 ${c.bold("EXAMPLES")}
   aether                               # interactive REPL
@@ -348,10 +356,98 @@ async function handleMcp(rest) {
     return;
   }
 
+  if (sub === "search" || sub === "find") {
+    const query = rest.slice(1).join(" ").trim();
+    const results = searchRegistry(query);
+    if (results.length === 0) {
+      console.log(c.gray(`No MCP servers in the registry match "${query}".`));
+      console.log(c.gray("Browse the full list: ") + c.cyan("aether mcp search"));
+      return;
+    }
+    console.log(
+      c.bold(query ? `MCP servers matching "${query}":` : `Available MCP servers (${results.length}):`),
+    );
+    for (const e of results) {
+      const sourceTag = e.source === "official"
+        ? c.gray("(official)")
+        : c.yellow("(community)");
+      console.log(`  ${c.cyan(e.id.padEnd(16))} ${sourceTag}  ${e.description}`);
+    }
+    console.log("");
+    console.log(c.gray("Install one with: ") + c.cyan("aether mcp install <name>"));
+    return;
+  }
+
+  if (sub === "install" || sub === "get") {
+    const name = rest[1];
+    if (!name) {
+      die(
+        "aether mcp install: missing <name>.\n" +
+          "Try `aether mcp search` to see what's available.",
+      );
+    }
+    const entry = findRegistryEntry(name);
+    if (!entry) {
+      const suggestions = suggestSimilar(name);
+      let msg = `aether mcp install: unknown server "${name}".`;
+      if (suggestions.length > 0) {
+        msg += `\nDid you mean: ${suggestions.map((s) => c.cyan(s)).join(", ")}?`;
+      } else {
+        msg += `\nTry \`aether mcp search\` to browse the registry.`;
+      }
+      die(msg);
+    }
+    // Prompt for any required values (placeholders in args + env)
+    const allRequired = [...(entry.requires ?? []), ...(entry.requiresEnv ?? [])];
+    const values = {};
+    if (allRequired.length > 0) {
+      console.log(c.gray(`Installing ${c.cyan(entry.id)} — needs ${allRequired.length} input${allRequired.length === 1 ? "" : "s"}:`));
+      for (const key of allRequired) {
+        const promptText = entry.prompts?.[key] ?? key;
+        // eslint-disable-next-line no-await-in-loop -- sequential prompts are intentional
+        values[key] = await promptUser(`  ${promptText}: `);
+        if (!values[key]) die(`Cancelled — "${key}" is required.`);
+      }
+    }
+    let resolved;
+    try {
+      resolved = resolveEntry(entry, values);
+    } catch (e) {
+      die(e.message);
+    }
+    try {
+      const added = addServer({
+        name: entry.id,
+        command: resolved.command,
+        args: resolved.args,
+        env: resolved.env,
+      });
+      console.log(`${c.green("✓")} Installed MCP server "${c.cyan(entry.id)}".`);
+      console.log(c.gray(`  ${added.command}${added.args ? " " + added.args.join(" ") : ""}`));
+      console.log(c.gray("Restart aether (or run `aether`) to attach it."));
+    } catch (e) {
+      die(e.message || String(e));
+    }
+    return;
+  }
+
   die(
     `aether mcp: unknown subcommand "${sub}".\n` +
-      "Try one of: list, add, remove.",
+      "Try one of: list, add, install, search, remove.",
   );
+}
+
+function promptUser(question) {
+  if (!process.stdin.isTTY) {
+    return Promise.reject(new Error("Interactive prompt unavailable (non-TTY)"));
+  }
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
 }
 
 main().catch((err) => {
