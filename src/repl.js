@@ -14,8 +14,9 @@ import { runAgent } from "./agent.js";
 import { fetchBalance, AetherError } from "./api.js";
 import { runSetup } from "./setup.js";
 import { c, errorLine } from "./render.js";
+import { checkForUpdate } from "./update-check.js";
 
-const VERSION = "0.14.0";
+const VERSION = "0.15.0";
 const MODEL_NAME = "Aether Core";
 
 const SHORTCUTS = `
@@ -43,6 +44,10 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTur
     sessionIn: 0,
     sessionOut: 0,
   };
+
+  // Kick off the npm update check concurrently with the balance fetch so it
+  // adds no startup latency; the nudge (if any) prints just under the banner.
+  const updatePromise = checkForUpdate().catch(() => null);
 
   // Free balance check up front. If no key configured, walk through first-time
   // setup flow (open browser → paste key → verify → save).
@@ -75,6 +80,8 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTur
   }
 
   printBanner(state);
+  const updateNudge = await updatePromise;
+  if (updateNudge) console.log(updateNudge + "\n");
 
   const rl = readline.createInterface({
     input: process.stdin,
