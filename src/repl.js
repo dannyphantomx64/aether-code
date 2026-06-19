@@ -15,8 +15,9 @@ import { fetchBalance, AetherError } from "./api.js";
 import { runSetup } from "./setup.js";
 import { c, errorLine } from "./render.js";
 import { checkForUpdate } from "./update-check.js";
+import { promptBoxed, EXIT_SIGNAL } from "./ink-input.js";
 
-const VERSION = "0.15.0";
+const VERSION = "0.16.0";
 const MODEL_NAME = "Aether Core";
 
 const SHORTCUTS = `
@@ -83,45 +84,65 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTur
   const updateNudge = await updatePromise;
   if (updateNudge) console.log(updateNudge + "\n");
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: c.magenta("> "),
-    historySize: 200,
-  });
+  // Input: the Ink boxed input (bordered, Claude-style) when we have a TTY,
+  // with a readline fallback for non-TTY/CI or if Ink can't init raw mode.
+  // Set AETHER_NO_INK=1 to force the plain prompt.
+  const inputHistory = [];
+  const useInk = !!process.stdin.isTTY && process.env.AETHER_NO_INK !== "1";
+  let inkBroken = false;
+  let rl = null;
 
-  // Two-stage Ctrl+C: first cancels current line, second exits
-  let lastSigint = 0;
-  rl.on("SIGINT", () => {
-    const now = Date.now();
-    if (now - lastSigint < 1500) {
-      console.log(c.gray("\nbye."));
-      rl.close();
-      process.exit(0);
+  function ensureReadline() {
+    if (rl) return rl;
+    rl = readline.createInterface({ input: process.stdin, output: process.stdout, historySize: 200 });
+    let lastSigint = 0;
+    rl.on("SIGINT", () => {
+      const now = Date.now();
+      if (now - lastSigint < 1500) { console.log(c.gray("\nbye.")); rl.close(); process.exit(0); }
+      lastSigint = now;
+      console.log(c.gray(`\n(Press Ctrl+C again within 1.5s to exit, or type ${c.cyan("/exit")})`));
+    });
+    return rl;
+  }
+
+  function readlineQuestion() {
+    const r = ensureReadline();
+    return new Promise((resolve) => r.question(c.magenta("> "), (ans) => resolve(ans)));
+  }
+
+  // Returns the next raw input line, or EXIT_SIGNAL to quit.
+  async function nextLine() {
+    if (useInk && !inkBroken) {
+      try {
+        return await promptBoxed({
+          statusLeft: ` ${c.cyan("/help")}${c.dim(" shortcuts")}   ${c.cyan("/exit")}${c.dim(" quit")}`,
+          statusRight: `${state.autoYes ? "auto-yes" : "review"} · ${MODEL_NAME}`,
+          history: inputHistory,
+        });
+      } catch {
+        inkBroken = true;
+        console.log(c.gray("(rich input unavailable here — using the basic prompt)"));
+      }
     }
-    lastSigint = now;
-    console.log(c.gray(`\n(Press Ctrl+C again within 1.5s to exit, or type ${c.cyan("/exit")})`));
-    rl.prompt();
-  });
+    return readlineQuestion();
+  }
 
-  rl.prompt();
+  while (true) {
+    const raw = await nextLine();
+    if (raw === EXIT_SIGNAL) { console.log(c.gray("bye.")); if (rl) rl.close(); return; }
+    const line = (raw ?? "").trim();
+    if (!line) continue;
 
-  for await (const rawLine of rl) {
-    const line = rawLine.trim();
-    if (!line) {
-      rl.prompt();
-      continue;
-    }
+    // Echo the submitted line so it persists in scrollback (Ink clears its box
+    // region on unmount). Skip in readline mode — the terminal already echoed it.
+    if (useInk && !inkBroken) console.log(c.magenta("> ") + line);
+    inputHistory.push(line);
 
     // Slash command?
     if (line.startsWith("/") || line === "?") {
       const handled = await handleSlash(line, state);
-      if (handled === "exit") {
-        rl.close();
-        return;
-      }
+      if (handled === "exit") { if (rl) rl.close(); return; }
       printStatusLine(state);
-      rl.prompt();
       continue;
     }
 
@@ -147,7 +168,6 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTur
     }
 
     printStatusLine(state);
-    rl.prompt();
   }
 }
 
