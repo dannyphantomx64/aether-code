@@ -41,6 +41,9 @@ export function parseSkill(raw, sourcePath = "<inline>") {
   if (typeof raw !== "string" || raw.length === 0) {
     throw new Error(`Skill ${sourcePath}: empty content`);
   }
+  // Tolerate CRLF (Windows-authored skills / editors) — normalize to LF so the
+  // frontmatter delimiter and downstream line parsing don't choke on '\r'.
+  raw = raw.replace(/\r\n/g, "\n");
   if (!raw.startsWith("---")) {
     throw new Error(`Skill ${sourcePath}: missing YAML frontmatter (must start with '---')`);
   }

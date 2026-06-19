@@ -70,6 +70,22 @@ export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "glob_files",
+      description:
+        "Find files by path pattern (no content search). Returns matching file paths sorted by most-recently-modified. Use this to locate files by name/extension/location, e.g. '**/*.ts', 'src/**/*.test.js', 'package.json'. Faster and clearer than search_files when you only need to find files, not grep their contents.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: "Glob pattern. Supports ** (any depth), * (within a path segment), ?. e.g. 'src/**/*.js'." },
+          path: { type: "string", description: "Directory to search from. Default: the working directory." },
+        },
+        required: ["pattern"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "write_file",
       description:
         "Create or completely overwrite a file with the given content. The user will be shown a diff and may decline. If the parent directory doesn't exist, it will be created.",
@@ -88,13 +104,14 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "edit_file",
       description:
-        "Replace exactly one occurrence of `find` with `replace` in an existing file. Use this for targeted edits instead of rewriting whole files. Fails if `find` is not found or appears more than once.",
+        "Replace occurrences of `find` with `replace` in an existing file. Use this for targeted edits instead of rewriting whole files. By default replaces exactly one occurrence and fails if `find` is missing or appears more than once. Set `replace_all: true` to replace every occurrence.",
       parameters: {
         type: "object",
         properties: {
           path: { type: "string", description: "File path." },
-          find: { type: "string", description: "Exact text to replace (must appear exactly once)." },
+          find: { type: "string", description: "Exact text to replace. Must be unique unless replace_all is true." },
           replace: { type: "string", description: "Text to substitute in." },
+          replace_all: { type: "boolean", description: "Replace ALL occurrences instead of requiring a unique match. Default: false." },
         },
         required: ["path", "find", "replace"],
       },
@@ -179,6 +196,112 @@ export const TOOL_DEFINITIONS = [
   },
 ];
 
+/* ─────────────────────── Argument validation ─────────────────────── */
+
+const TOOL_SCHEMAS = Object.fromEntries(
+  TOOL_DEFINITIONS.map((t) => [t.function.name, t.function.parameters]),
+);
+
+function typeMatches(val, t) {
+  switch (t) {
+    case "string": return typeof val === "string";
+    case "number": return typeof val === "number";
+    case "integer": return typeof val === "number" && Number.isInteger(val);
+    case "boolean": return typeof val === "boolean";
+    case "object": return typeof val === "object" && val !== null && !Array.isArray(val);
+    case "array": return Array.isArray(val);
+    default: return true;
+  }
+}
+
+/**
+ * Validate parsed tool arguments against the tool's JSON schema BEFORE the
+ * handler runs. Returns an error string the model can act on, or null if valid.
+ * Catches malformed/partial args from the model that would otherwise surface as
+ * cryptic downstream errors.
+ */
+export function validateToolArgs(name, args) {
+  const schema = TOOL_SCHEMAS[name];
+  if (!schema) return `Unknown tool: ${name}`;
+  if (typeof args !== "object" || args === null || Array.isArray(args)) {
+    return `Arguments for ${name} must be a JSON object.`;
+  }
+  for (const req of schema.required ?? []) {
+    if (args[req] === undefined || args[req] === null) {
+      return `Missing required argument "${req}" for ${name}.`;
+    }
+  }
+  for (const [key, val] of Object.entries(args)) {
+    const prop = schema.properties?.[key];
+    if (!prop || val === undefined || val === null) continue;
+    if (prop.type && !typeMatches(val, prop.type)) {
+      return `Argument "${key}" for ${name} must be of type ${prop.type}.`;
+    }
+  }
+  return null;
+}
+
+/* ─────────────────────── Glob + ignore helpers ─────────────────────── */
+
+const ALWAYS_SKIP = new Set([".git", "node_modules", "dist"]);
+const MAX_SEARCH_MATCHES = 200;
+const MAX_GLOB_RESULTS = 300;
+
+// Convert a glob ('**', '*', '?') to an anchored regex over a POSIX-style
+// relative path. ** spans directory separators; * does not.
+export function globToRegExp(glob) {
+  let re = "";
+  for (let i = 0; i < glob.length; i++) {
+    const ch = glob[i];
+    if (ch === "*") {
+      if (glob[i + 1] === "*") {
+        re += ".*";
+        i++;
+        if (glob[i + 1] === "/") i++; // collapse '**/' so it can also match zero dirs
+      } else {
+        re += "[^/]*";
+      }
+    } else if (ch === "?") {
+      re += "[^/]";
+    } else if ("\\^$+.()|{}[]".includes(ch)) {
+      re += "\\" + ch;
+    } else {
+      re += ch;
+    }
+  }
+  return new RegExp("^" + re + "$");
+}
+
+// Parse a .gitignore at `root` into a matcher. Pragmatic subset of gitignore
+// semantics: blank/comment lines ignored; trailing '/' = directory-only;
+// leading '/' = root-anchored; '*'/'?' globs supported.
+function loadIgnore(root) {
+  let lines = [];
+  try { lines = fs.readFileSync(path.join(root, ".gitignore"), "utf8").split("\n"); } catch { /* none */ }
+  const rules = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    let pat = line;
+    const dirOnly = pat.endsWith("/");
+    if (dirOnly) pat = pat.slice(0, -1);
+    const anchored = pat.startsWith("/");
+    if (anchored) pat = pat.slice(1);
+    rules.push({ re: globToRegExp(pat), anchored, dirOnly, base: !pat.includes("/") });
+  }
+  return (relPath, isDir) => {
+    const norm = relPath.split(path.sep).join("/");
+    const baseName = norm.split("/").pop();
+    for (const r of rules) {
+      if (r.dirOnly && !isDir) continue;
+      if (r.base) { if (r.re.test(baseName)) return true; }
+      else if (r.anchored) { if (r.re.test(norm)) return true; }
+      else if (r.re.test(norm) || r.re.test(baseName)) return true;
+    }
+    return false;
+  };
+}
+
 /* ─────────────────────── Helpers ─────────────────────── */
 
 function resolveSafe(rel, opts) {
@@ -224,10 +347,15 @@ export async function executeTool(call, opts) {
   }
 
   const name = call.function.name;
+  const validationError = validateToolArgs(name, args);
+  if (validationError) {
+    return { ok: false, output: validationError };
+  }
   const handlers = {
     read_file: () => readFile(args, opts),
     list_dir: () => listDir(args, opts),
     search_files: () => searchFiles(args, opts),
+    glob_files: () => globFiles(args, opts),
     write_file: () => writeFile(args, opts),
     edit_file: () => editFile(args, opts),
     run_shell: () => runShell(args, opts),
@@ -289,17 +417,21 @@ function searchFiles(args, opts) {
     return { ok: false, output: `Invalid regex: ${e.message}` };
   }
   const root = resolveSafe(args.path, opts);
+  const isIgnored = loadIgnore(path.resolve(opts.cwd));
   const matches = [];
-  const globRe = args.glob ? new RegExp("^" + args.glob.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$") : null;
+  const globRe = args.glob ? globToRegExp(args.glob) : null;
+  let truncated = false;
 
   function walk(dir) {
-    if (matches.length >= 50) return;
+    if (matches.length >= MAX_SEARCH_MATCHES) { truncated = true; return; }
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
-      if (matches.length >= 50) return;
-      if (e.name.startsWith(".") || e.name === "node_modules" || e.name === "dist") continue;
+      if (matches.length >= MAX_SEARCH_MATCHES) { truncated = true; return; }
+      if (e.name.startsWith(".") || ALWAYS_SKIP.has(e.name)) continue;
       const full = path.join(dir, e.name);
+      const rel = path.relative(opts.cwd, full);
+      if (isIgnored(rel, e.isDirectory())) continue;
       if (e.isDirectory()) {
         walk(full);
       } else if (e.isFile()) {
@@ -313,15 +445,60 @@ function searchFiles(args, opts) {
         const lines = content.split("\n");
         for (let i = 0; i < lines.length; i++) {
           if (regex.test(lines[i])) {
-            matches.push({ file: path.relative(opts.cwd, full), line: i + 1, text: lines[i].slice(0, 300) });
-            if (matches.length >= 50) return;
+            matches.push({ file: rel, line: i + 1, text: lines[i].slice(0, 300) });
+            if (matches.length >= MAX_SEARCH_MATCHES) { truncated = true; return; }
           }
         }
       }
     }
   }
   walk(root);
-  return { ok: true, output: JSON.stringify(matches, null, 2) };
+  const payload = { matches };
+  if (truncated) {
+    payload.truncated = true;
+    payload.note = `Showing the first ${MAX_SEARCH_MATCHES} matches — refine the pattern or pass a 'glob' filter to narrow.`;
+  }
+  return { ok: true, output: JSON.stringify(payload, null, 2) };
+}
+
+function globFiles(args, opts) {
+  if (typeof args.pattern !== "string") return { ok: false, output: "pattern is required" };
+  const root = resolveSafe(typeof args.path === "string" ? args.path : ".", opts);
+  const re = globToRegExp(args.pattern);
+  const isIgnored = loadIgnore(path.resolve(opts.cwd));
+  const found = [];
+  let truncated = false;
+
+  function walk(dir) {
+    if (found.length >= MAX_GLOB_RESULTS) { truncated = true; return; }
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (found.length >= MAX_GLOB_RESULTS) { truncated = true; return; }
+      if (e.name.startsWith(".") || ALWAYS_SKIP.has(e.name)) continue;
+      const full = path.join(dir, e.name);
+      const rel = path.relative(opts.cwd, full);
+      if (isIgnored(rel, e.isDirectory())) continue;
+      if (e.isDirectory()) {
+        walk(full);
+      } else if (e.isFile()) {
+        const relToRoot = path.relative(root, full).split(path.sep).join("/");
+        if (re.test(relToRoot)) {
+          let mtime = 0;
+          try { mtime = fs.statSync(full).mtimeMs; } catch { /* ignore */ }
+          found.push({ path: rel, mtime });
+        }
+      }
+    }
+  }
+  walk(root);
+  found.sort((a, b) => b.mtime - a.mtime); // most-recently-modified first
+  const payload = { files: found.map((f) => f.path) };
+  if (truncated) {
+    payload.truncated = true;
+    payload.note = `Showing the first ${MAX_GLOB_RESULTS} files — narrow the pattern.`;
+  }
+  return { ok: true, output: JSON.stringify(payload, null, 2) };
 }
 
 async function writeFile(args, opts) {
@@ -358,20 +535,25 @@ async function editFile(args, opts) {
   if (occurrences === 0) {
     return { ok: false, output: `\`find\` text not found in ${args.path}. Tip: read the file first to copy exact characters.` };
   }
-  if (occurrences > 1) {
+  if (!args.replace_all && occurrences > 1) {
     return {
       ok: false,
-      output: `\`find\` text appears ${occurrences} times — must be unique. Add more context to disambiguate.`,
+      output: `\`find\` text appears ${occurrences} times — must be unique. Add more context to disambiguate, or set replace_all: true to replace all ${occurrences}.`,
     };
   }
-  const newContent = oldContent.replace(args.find, args.replace);
+  // split/join replaces every occurrence without regex-escaping pitfalls; for
+  // the default single-edit path occurrences === 1 so it's equivalent.
+  const newContent = args.replace_all
+    ? oldContent.split(args.find).join(args.replace)
+    : oldContent.replace(args.find, args.replace);
+  const rel = path.relative(opts.cwd, abs);
   console.log("");
-  console.log(c.dim(`edit ${path.relative(opts.cwd, abs)}`));
-  console.log(unifiedDiff(oldContent, newContent, path.relative(opts.cwd, abs)));
+  console.log(c.dim(`edit ${rel}${args.replace_all ? ` (${occurrences} occurrences)` : ""}`));
+  console.log(unifiedDiff(oldContent, newContent, rel));
   const approved = await confirm(c.yellow("Apply this edit?"), opts.autoYes);
   if (!approved) return { ok: false, output: "User declined the edit." };
   fs.writeFileSync(abs, newContent, "utf8");
-  return { ok: true, output: `Edited ${path.relative(opts.cwd, abs)}` };
+  return { ok: true, output: `Edited ${rel}${args.replace_all && occurrences > 1 ? ` (${occurrences} replacements)` : ""}` };
 }
 
 /* ─────────────────────── Web tools ─────────────────────── */

@@ -158,7 +158,7 @@ describe("executeTool — input validation", () => {
       opts,
     );
     assert.equal(r.ok, false);
-    assert.match(r.output, /url is required/);
+    assert.match(r.output, /required/);
   });
 
   test("web_search rejects missing query arg", async () => {
@@ -167,6 +167,6 @@ describe("executeTool — input validation", () => {
       opts,
     );
     assert.equal(r.ok, false);
-    assert.match(r.output, /query is required/);
+    assert.match(r.output, /required/);
   });
 });

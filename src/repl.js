@@ -15,7 +15,7 @@ import { fetchBalance, AetherError } from "./api.js";
 import { runSetup } from "./setup.js";
 import { c, errorLine } from "./render.js";
 
-const VERSION = "0.2.0";
+const VERSION = "0.13.0";
 const MODEL_NAME = "Aether Core";
 
 const SHORTCUTS = `

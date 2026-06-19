@@ -1,6 +1,59 @@
 // API client.
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { getConfig } from "./config.js";
+
+// Resolve our own version once for the User-Agent header — read from
+// package.json so it can't drift (the file previously sent three different
+// hardcoded versions across three calls).
+function readVersion() {
+  try {
+    const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+    return JSON.parse(fs.readFileSync(pkgPath, "utf8")).version || "0";
+  } catch {
+    return "0";
+  }
+}
+const USER_AGENT = `aether-code/${readVersion()}`;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * fetch() with bounded exponential-backoff retries. Retries on thrown network
+ * errors (DNS/reset/offline blip) and transient 5xx; never retries 4xx
+ * (auth/credit/validation — a retry won't help). Body is always a small JSON
+ * string, so resending is safe. For the streaming endpoint only the initial
+ * connection is retried.
+ */
+export async function fetchWithRetry(url, options, { retries = 2, baseDelay = 500, onRetry } = {}) {
+  let attempt = 0;
+  while (true) {
+    try {
+      const res = await fetch(url, options);
+      if (res.status >= 500 && attempt < retries) {
+        attempt++;
+        if (onRetry) onRetry(attempt, `HTTP ${res.status}`);
+        await sleep(baseDelay * 2 ** (attempt - 1));
+        continue;
+      }
+      return res;
+    } catch (e) {
+      if (attempt < retries) {
+        attempt++;
+        if (onRetry) onRetry(attempt, e.message);
+        await sleep(baseDelay * 2 ** (attempt - 1));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+function defaultOnRetry(attempt, why) {
+  process.stderr.write(`  ⟳ connection issue (${why}) — retry ${attempt}…\n`);
+}
 
 /**
  * Free balance + plan check via /api/v1/me. Doesn't charge credits.
@@ -16,14 +69,14 @@ export async function fetchBalance() {
   }
   let res;
   try {
-    res = await fetch(`${baseUrl}/api/v1/me`, {
+    res = await fetchWithRetry(`${baseUrl}/api/v1/me`, {
       method: "GET",
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${apiKey}`,
-        "User-Agent": "aether-code/0.2.0",
+        "User-Agent": USER_AGENT,
       },
-    });
+    }, { onRetry: defaultOnRetry });
   } catch (e) {
     throw new AetherError(`Network error: ${e.message}`, "NETWORK", 0);
   }
@@ -81,13 +134,13 @@ export async function agentTurnStream({
 
   let res;
   try {
-    res = await fetch(`${baseUrl}/api/v1/agent/stream`, {
+    res = await fetchWithRetry(`${baseUrl}/api/v1/agent/stream`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
         Authorization: `Bearer ${apiKey}`,
-        "User-Agent": "aether-code/0.1.0",
+        "User-Agent": USER_AGENT,
       },
       body: JSON.stringify({
         messages,
@@ -95,7 +148,7 @@ export async function agentTurnStream({
         max_tokens: maxTokens,
         temperature,
       }),
-    });
+    }, { onRetry: defaultOnRetry });
   } catch (e) {
     throw new AetherError(`Network error: ${e.message}`, "NETWORK", 0);
   }
@@ -200,12 +253,12 @@ export async function agentTurn({ messages, tools, maxTokens, temperature }) {
 
   let res;
   try {
-    res = await fetch(`${baseUrl}/api/v1/agent`, {
+    res = await fetchWithRetry(`${baseUrl}/api/v1/agent`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
-        "User-Agent": "aether-code/0.1.0",
+        "User-Agent": USER_AGENT,
       },
       body: JSON.stringify({
         messages,
@@ -213,7 +266,7 @@ export async function agentTurn({ messages, tools, maxTokens, temperature }) {
         max_tokens: maxTokens,
         temperature,
       }),
-    });
+    }, { onRetry: defaultOnRetry });
   } catch (e) {
     throw new AetherError(`Network error: ${e.message}`, "NETWORK", 0);
   }
