@@ -15,7 +15,7 @@ import { fetchBalance, AetherError } from "./api.js";
 import { runSetup } from "./setup.js";
 import { c, errorLine } from "./render.js";
 
-const VERSION = "0.13.0";
+const VERSION = "0.14.0";
 const MODEL_NAME = "Aether Core";
 
 const SHORTCUTS = `
@@ -221,17 +221,30 @@ async function handleSlash(line, state) {
 
 /* ───────── banner + status ───────── */
 
+const visLen = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").length;
+const shortenPath = (p, max) => (p.length <= max ? p : "..." + p.slice(p.length - max + 3));
+
 function printBanner(state) {
+  const cols = process.stdout.columns || 80;
+  const W = Math.max(40, Math.min(cols - 1, 64));
+  // Brand-coloured rules top + bottom; content is indented with no right
+  // border, so nothing can misalign regardless of terminal font/width.
+  const rule = c.magenta("─".repeat(W));
+  const mode = state.autoYes ? "auto-yes" : "review mode";
+
   console.log("");
-  console.log(c.bold(c.magenta(`aether-code`)) + c.gray(`  v${VERSION}`));
-  console.log(
-    c.gray(`${MODEL_NAME} (1M context) · uncensored · `) +
-      c.cyan(state.autoYes ? "auto-yes" : "review mode") +
-      (state.balance != null ? c.gray(`  ·  ${state.balance.toLocaleString()} credits`) : ""),
-  );
-  console.log(c.gray(state.cwd));
-  console.log("");
-  console.log(c.gray(`Type ${c.cyan("/help")} for shortcuts. ${c.cyan("/exit")} or Ctrl+C twice to quit.`));
+  console.log(rule);
+  console.log(`  ${c.bold(c.magenta("aether-code"))}${c.gray("   v" + VERSION)}`);
+  console.log(`  ${c.gray(`${MODEL_NAME} · 1M context · uncensored`)}`);
+  console.log(`  ${c.gray(mode)}${state.balance != null ? c.gray(`  ·  ${state.balance.toLocaleString()} credits`) : ""}`);
+  console.log(`  ${c.gray(shortenPath(state.cwd, W - 2))}`);
+  console.log(rule);
+
+  // Bottom status bar: shortcuts on the left, mode on the right (Claude-style).
+  const left = ` ${c.cyan("/help")}${c.dim(" shortcuts")}   ${c.cyan("/exit")}${c.dim(" quit")}`;
+  const right = `${c.cyan(mode)}${c.dim(" · ")}${c.gray(MODEL_NAME)} `;
+  const gap = Math.max(3, cols - visLen(left) - visLen(right) - 1);
+  console.log(left + " ".repeat(gap) + right);
   console.log("");
 }
 
