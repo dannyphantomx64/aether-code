@@ -118,6 +118,9 @@ export async function runAgent({
           // be split across stream chunks) before display.
           const clean = stripper.push(text);
           if (!clean) return;
+          // Don't open a "● " bullet for leading whitespace (e.g. when a whole
+          // turn's text was suppressed as a leak, leaving only a stray newline).
+          if (!lastWasText && !clean.trim()) return;
           stopSpin();
           if (!lastWasText) {
             process.stdout.write("\n" + c.cyan("● "));
@@ -148,7 +151,7 @@ export async function runAgent({
 
     // Flush any held-back partial token, then close the line.
     const tail = stripper.flush();
-    if (tail) {
+    if (tail && (lastWasText || tail.trim())) {
       if (!lastWasText) { process.stdout.write("\n" + c.cyan("● ")); lastWasText = true; }
       process.stdout.write(tail);
     }
