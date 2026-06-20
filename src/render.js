@@ -24,6 +24,21 @@ export function divider() {
   return c.gray("─".repeat(Math.min(60, w)));
 }
 
+const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
+
+// Draw a bordered box around content lines. Light box-drawing chars — same
+// Unicode block as the rules we already render, so it's safe in cmd.exe.
+export function box(lines, { color = c.gray, padX = 2 } = {}) {
+  const inner = Math.max(0, ...lines.map((l) => stripAnsi(l).length));
+  const w = inner + padX * 2;
+  const top = color("╭" + "─".repeat(w) + "╮");
+  const bot = color("╰" + "─".repeat(w) + "╯");
+  const mid = lines.map(
+    (l) => color("│") + " ".repeat(padX) + l + " ".repeat(inner - stripAnsi(l).length + padX) + color("│"),
+  );
+  return [top, ...mid, bot].join("\n");
+}
+
 export function turn(n) {
   return c.gray(`turn ${n}`);
 }
@@ -70,20 +85,21 @@ export function setTerminalTitle(title) {
 // plan) just get a check — the detail was already printed.
 export function toolSummary(name, result) {
   const ok = result.ok;
-  const mark = ok ? c.green("●") : c.red("×");
+  // A tree branch links the result to the action above it (modern CLI style).
+  const branch = ok ? c.green("└─") : c.red("└─");
   const out = result.output ?? "";
   const firstLine = out.split("\n").find((l) => l.trim()) ?? "";
 
   if (name === "run_shell") {
     let code = null;
     try { code = JSON.parse(out).exit_code; } catch { /* ignore */ }
-    return `  ${mark} ${c.gray(code === null ? (ok ? "done" : "failed") : `exit ${code}`)}`;
+    return `  ${branch} ${c.gray(code === null ? (ok ? "done" : "failed") : `exit ${code}`)}`;
   }
-  if (name === "todo_write") return ""; // the Plan box is its own feedback
+  if (name === "todo_write") return ""; // the Plan is its own feedback
   if (name === "ask_user") return ""; // the menu already showed the answer
   if (name === "write_file" || name === "edit_file") {
     // Handler already printed the diff; echo its short status line.
-    return `  ${mark} ${c.gray(ellip(firstLine, 100))}`;
+    return `  ${branch} ${c.gray(ellip(firstLine, 100))}`;
   }
   let summary = "";
   try {
@@ -95,7 +111,7 @@ export function toolSummary(name, result) {
   if (!summary) {
     summary = name === "read_file" ? `${out.split("\n").length} lines` : ellip(firstLine, 100);
   }
-  return `  ${mark} ${c.gray(summary)}`;
+  return `  ${branch} ${c.gray(summary)}`;
 }
 
 // Strip model "harmony"/channel control tokens (<|channel|>, <|message|>,

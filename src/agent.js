@@ -79,8 +79,9 @@ export async function runAgent({
   let lastBalance = null;
 
   for (let i = 0; i < maxTurns; i++) {
-    // A blank line separates steps (no noisy "turn N" headers).
-    process.stdout.write("\n");
+    // No turn header and no leading blank here — each step (assistant text and
+    // each tool label) begins with its own "\n● ", so spacing stays exactly one
+    // blank line per step instead of stacking up.
 
     // Stream the assistant's response. Print text deltas as they arrive,
     // along with tool-call announcements as soon as the model commits to
@@ -107,7 +108,7 @@ export async function runAgent({
           const clean = stripper.push(text);
           if (!clean) return;
           if (!lastWasText) {
-            process.stdout.write(c.cyan("● "));
+            process.stdout.write("\n" + c.cyan("● "));
             lastWasText = true;
           }
           process.stdout.write(clean);
@@ -133,7 +134,7 @@ export async function runAgent({
     // Flush any held-back partial token, then close the line.
     const tail = stripper.flush();
     if (tail) {
-      if (!lastWasText) { process.stdout.write(c.cyan("● ")); lastWasText = true; }
+      if (!lastWasText) { process.stdout.write("\n" + c.cyan("● ")); lastWasText = true; }
       process.stdout.write(tail);
     }
     if (lastWasText) process.stdout.write("\n");

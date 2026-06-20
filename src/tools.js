@@ -557,8 +557,7 @@ async function writeFile(args, opts) {
   if (exists && oldContent === args.content) {
     return { ok: true, output: `(no change — file already matches)` };
   }
-  // Show diff + confirm
-  console.log("");
+  // Show diff + confirm (the "● write <file>" label already spaced this block)
   console.log(summarizeWrite(oldContent, args.content, path.relative(opts.cwd, abs)));
   console.log(unifiedDiff(oldContent ?? "", args.content, path.relative(opts.cwd, abs)));
   const approved = await confirm(c.yellow("Apply this write?"), opts.autoYes);
@@ -593,7 +592,6 @@ async function editFile(args, opts) {
     ? oldContent.split(args.find).join(args.replace)
     : oldContent.replace(args.find, args.replace);
   const rel = path.relative(opts.cwd, abs);
-  console.log("");
   console.log(c.dim(`edit ${rel}${args.replace_all ? ` (${occurrences} occurrences)` : ""}`));
   console.log(unifiedDiff(oldContent, newContent, rel));
   const approved = await confirm(c.yellow("Apply this edit?"), opts.autoYes);
@@ -722,7 +720,6 @@ export function htmlToText(html) {
 async function runShell(args, opts) {
   if (typeof args.command !== "string") return { ok: false, output: "command is required" };
   const cwd = args.cwd ? resolveSafe(args.cwd, opts) : opts.cwd;
-  console.log("");
   console.log(c.yellow("$ ") + c.bold(args.command) + (args.cwd ? c.dim(`  (cwd: ${args.cwd})`) : ""));
   const approved = await confirm(c.yellow("Run this command?"), opts.autoYes);
   if (!approved) return { ok: false, output: "User declined the command." };
@@ -829,7 +826,7 @@ function todoWrite(args, opts) {
 function renderTodos(todos) {
   if (!process.stdout.isTTY) return; // skip render in non-TTY (CI, piped, tests)
   console.log("");
-  console.log(c.dim("─── Plan ───"));
+  console.log(c.cyan("●") + " " + c.bold("Plan"));
   for (const t of todos) {
     const icon =
       t.status === "completed"
@@ -842,7 +839,7 @@ function renderTodos(todos) {
         ? c.dim(t.content)
         : t.status === "in_progress"
           ? c.bold(t.content)
-          : t.content;
+          : c.gray(t.content);
     console.log(`  ${icon} ${text}`);
   }
   console.log("");

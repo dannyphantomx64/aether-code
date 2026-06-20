@@ -24,7 +24,7 @@ export function unifiedDiff(oldText, newText, filename) {
   const changedNew = newLines.slice(prefix, newLines.length - suffix);
 
   const lines = [];
-  lines.push(c.bold(c.cyan(`@@ ${filename} @@`)));
+  // No "@@ file @@" header — the "● write <file>" label already names the file.
   if (prefix > 0) lines.push(c.gray(`  …${prefix} unchanged line${prefix === 1 ? "" : "s"} above…`));
   for (const l of changedOld) lines.push(c.red(`- ${l}`));
   for (const l of changedNew) lines.push(c.green(`+ ${l}`));

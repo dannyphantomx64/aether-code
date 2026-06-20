@@ -13,11 +13,11 @@ import path from "node:path";
 import { runAgent } from "./agent.js";
 import { fetchBalance, AetherError } from "./api.js";
 import { runSetup } from "./setup.js";
-import { c, errorLine } from "./render.js";
+import { c, errorLine, box } from "./render.js";
 import { checkForUpdate } from "./update-check.js";
 import { promptBoxed, EXIT_SIGNAL } from "./ink-input.js";
 
-const VERSION = "0.21.0";
+const VERSION = "0.22.0";
 const MODEL_NAME = "Aether Core";
 
 const SHORTCUTS = `
@@ -272,24 +272,16 @@ const visLen = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").length;
 const shortenPath = (p, max) => (p.length <= max ? p : "..." + p.slice(p.length - max + 3));
 
 function printBanner(state) {
-  const cols = process.stdout.columns || 80;
-  const W = Math.max(40, Math.min(cols - 1, 64));
-  // Brand-coloured rules top + bottom; content is indented with no right
-  // border, so nothing can misalign regardless of terminal font/width.
-  const rule = c.magenta("─".repeat(W));
   const mode = state.autoYes ? (state.unsafePaths ? "skip-permissions" : "auto-yes") : "review mode";
-
+  const credits = state.balance != null ? `${state.balance.toLocaleString()} credits · ` : "";
+  const lines = [
+    c.bold(c.magenta("aether")) + c.gray("  ·  ") + c.bold(MODEL_NAME) + c.gray("   v" + VERSION),
+    c.gray("1M context · uncensored · " + mode),
+    c.gray(credits + shortenPath(state.cwd, 52)),
+  ];
   console.log("");
-  console.log(rule);
-  console.log(`  ${c.bold(c.magenta("aether-code"))}${c.gray("   v" + VERSION)}`);
-  console.log(`  ${c.gray(`${MODEL_NAME} · 1M context · uncensored`)}`);
-  console.log(`  ${c.gray(mode)}${state.balance != null ? c.gray(`  ·  ${state.balance.toLocaleString()} credits`) : ""}`);
-  console.log(`  ${c.gray(shortenPath(state.cwd, W - 2))}`);
-  console.log(rule);
+  console.log(box(lines, { color: c.magenta, padX: 2 }));
   console.log("");
-  // No bottom status bar here — the Ink input box renders its own persistent
-  // status bar beneath it (one bar, Claude-style). The readline fallback prints
-  // a one-line hint instead (see runRepl).
 }
 
 function printStatusLine(state) {
