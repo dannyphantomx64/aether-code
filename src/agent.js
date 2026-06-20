@@ -18,6 +18,17 @@ function envContext(cwd) {
   const home = os.homedir();
   const desktop = path.join(home, "Desktop");
   const documents = path.join(home, "Documents");
+  const win = process.platform === "win32";
+  // OS-specific shell guidance: gemma tends to emit Unix commands (mkdir -p,
+  // touch, &&-chains) which FAIL in Windows cmd.exe ("The syntax of the command
+  // is incorrect"). Steer it to the file tools (which are cross-platform and
+  // auto-create parent dirs) and OS-appropriate shell usage.
+  const shellNote = win
+    ? `shell: Windows cmd.exe. To create files OR directories, use the write_file tool — ` +
+      `it creates any missing parent folders automatically. Do NOT use shell "mkdir -p", ` +
+      `"touch", "ls", "rm", "cp", "mv", or "&&"-chained Unix commands; they FAIL in cmd.exe. ` +
+      `Run programs/tests with their interpreter (python, node, java, etc.).`
+    : `shell: POSIX sh. Standard Unix commands are available. write_file still auto-creates parent dirs.`;
   return (
     `[environment]\n` +
     `os: ${process.platform}\n` +
@@ -25,6 +36,7 @@ function envContext(cwd) {
     `home: ${home}\n` +
     `desktop: ${desktop}\n` +
     `documents: ${documents}\n` +
+    `${shellNote}\n` +
     `When the user names a location ("my desktop", "home", "documents"), write to ` +
     `the matching ABSOLUTE path above (e.g. desktop -> ${desktop}). Otherwise ` +
     `work under the cwd. Use absolute paths when a specific location is named.\n` +

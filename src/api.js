@@ -33,6 +33,9 @@ export async function fetchWithRetry(url, options, { retries = 2, baseDelay = 50
     try {
       const res = await fetch(url, options);
       if (res.status >= 500 && attempt < retries) {
+        // Release the connection back to the pool before retrying — an
+        // unconsumed body keeps the socket open (undici won't reuse it).
+        res.body?.cancel().catch(() => {});
         attempt++;
         if (onRetry) onRetry(attempt, `HTTP ${res.status}`);
         await sleep(baseDelay * 2 ** (attempt - 1));
@@ -175,39 +178,69 @@ export async function agentTurnStream({
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.startsWith("data:")) continue;
-      const json = line.slice(5).trim();
-      if (!json) continue;
-      let evt;
-      try { evt = JSON.parse(json); } catch { continue; }
-      if (evt.kind === "delta") {
-        textBuf += evt.content;
-        if (onDelta) onDelta(evt.content);
-      } else if (evt.kind === "tool_call_delta") {
-        const slot = toolBuf.get(evt.index) || { id: undefined, name: undefined, args: "" };
-        if (evt.id) slot.id = evt.id;
-        if (evt.name) slot.name = evt.name;
-        if (evt.args_delta) slot.args += evt.args_delta;
-        toolBuf.set(evt.index, slot);
-        if (onToolCallDelta) onToolCallDelta(evt);
-      } else if (evt.kind === "finish") {
-        finishReason = evt.reason;
-        if (onFinish) onFinish(evt.reason);
-      } else if (evt.kind === "done") {
-        creditsCharged = evt.creditsCharged ?? 0;
-        balanceAfter = evt.balanceAfter ?? null;
-        usage = evt.usage ?? usage;
-      } else if (evt.kind === "error") {
-        streamError = evt.error;
-      }
+
+  // Dispatch a single parsed SSE "data:" line.
+  const handleLine = (line) => {
+    if (!line.startsWith("data:")) return;
+    const json = line.slice(5).trim(); // .trim() also drops a CRLF trailing \r
+    if (!json) return;
+    let evt;
+    try { evt = JSON.parse(json); } catch { return; }
+    if (evt.kind === "delta") {
+      textBuf += evt.content;
+      if (onDelta) onDelta(evt.content);
+    } else if (evt.kind === "tool_call_delta") {
+      const slot = toolBuf.get(evt.index) || { id: undefined, name: undefined, args: "" };
+      if (evt.id) slot.id = evt.id;
+      if (evt.name) slot.name = evt.name;
+      if (evt.args_delta) slot.args += evt.args_delta;
+      toolBuf.set(evt.index, slot);
+      if (onToolCallDelta) onToolCallDelta(evt);
+    } else if (evt.kind === "finish") {
+      finishReason = evt.reason;
+      if (onFinish) onFinish(evt.reason);
+    } else if (evt.kind === "done") {
+      creditsCharged = evt.creditsCharged ?? 0;
+      balanceAfter = evt.balanceAfter ?? null;
+      usage = evt.usage ?? usage;
+    } else if (evt.kind === "error") {
+      streamError = evt.error;
     }
+  };
+
+  // Watchdog: if the open stream stalls (no bytes) for too long, abort instead
+  // of hanging the CLI forever.
+  const READ_TIMEOUT_MS = 120_000;
+  const readOnce = () => {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new AetherError("Stream stalled — no data for 120s", "STREAM_TIMEOUT", 0)),
+        READ_TIMEOUT_MS,
+      );
+    });
+    return Promise.race([reader.read(), timeout]).finally(() => clearTimeout(timer));
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await readOnce();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) handleLine(line);
+    }
+    // Flush any multibyte bytes the decoder is holding, then process a final
+    // line that arrived without a trailing newline (else the "done" event with
+    // credits/usage is silently dropped).
+    buffer += decoder.decode();
+    if (buffer.trim()) handleLine(buffer);
+  } catch (e) {
+    reader.cancel().catch(() => {});
+    throw e;
+  } finally {
+    try { reader.releaseLock(); } catch { /* already released / pending — ignore */ }
   }
 
   if (streamError) {
