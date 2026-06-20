@@ -24,9 +24,9 @@ import {
   suggestSimilar,
 } from "../src/mcp-registry.js";
 import readline from "node:readline";
-import { c, errorLine, divider } from "../src/render.js";
+import { c, errorLine, divider, setTerminalTitle } from "../src/render.js";
 
-const VERSION = "0.18.0";
+const VERSION = "0.19.0";
 
 /**
  * Try to start MCP servers from ~/.aether/mcp.json. Returns a started
@@ -134,6 +134,7 @@ function die(msg, code = 1) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  setTerminalTitle("Aether");
 
   if (args.flags.help) {
     process.stdout.write(HELP);

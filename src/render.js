@@ -53,9 +53,15 @@ export function toolLabel(name, args) {
     case "run_shell":    return `${verb("run")}    ${arg(a.command)}`;
     case "web_search":   return `${verb("search web")} ${arg(JSON.stringify(a.query ?? ""))}`;
     case "web_fetch":    return `${verb("fetch")}  ${arg(a.url)}`;
-    case "todo_write":   return verb("plan");
+    case "todo_write":   return ""; // its Plan box is the label
     default:             return `${verb(name)} ${arg(JSON.stringify(a))}`;
   }
+}
+
+// Set the terminal window/tab title (so cmd.exe shows "Aether", not the node
+// path). OSC 0 — supported by cmd.exe, Windows Terminal, and POSIX terminals.
+export function setTerminalTitle(title) {
+  if (process.stdout.isTTY) process.stdout.write(`\x1b]0;${title}\x07`);
 }
 
 // Terse one-line result summary instead of dumping raw JSON / file contents.
@@ -72,8 +78,9 @@ export function toolSummary(name, result) {
     try { code = JSON.parse(out).exit_code; } catch { /* ignore */ }
     return `  ${mark} ${c.gray(code === null ? (ok ? "done" : "failed") : `exit ${code}`)}`;
   }
-  if (name === "write_file" || name === "edit_file" || name === "todo_write") {
-    // Handler already printed the diff / plan; echo its short status line.
+  if (name === "todo_write") return ""; // the Plan box is its own feedback
+  if (name === "write_file" || name === "edit_file") {
+    // Handler already printed the diff; echo its short status line.
     return `  ${mark} ${c.gray(ellip(firstLine, 100))}`;
   }
   let summary = "";

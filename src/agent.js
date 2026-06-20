@@ -79,7 +79,8 @@ export async function runAgent({
   let lastBalance = null;
 
   for (let i = 0; i < maxTurns; i++) {
-    process.stdout.write("\n" + turn(i + 1) + "\n");
+    // A blank line separates steps (no noisy "turn N" headers).
+    process.stdout.write("\n");
 
     // Stream the assistant's response. Print text deltas as they arrive,
     // along with tool-call announcements as soon as the model commits to
@@ -106,7 +107,7 @@ export async function runAgent({
           const clean = stripper.push(text);
           if (!clean) return;
           if (!lastWasText) {
-            process.stdout.write("  ");
+            process.stdout.write(c.cyan("● "));
             lastWasText = true;
           }
           process.stdout.write(clean);
@@ -132,7 +133,7 @@ export async function runAgent({
     // Flush any held-back partial token, then close the line.
     const tail = stripper.flush();
     if (tail) {
-      if (!lastWasText) { process.stdout.write("  "); lastWasText = true; }
+      if (!lastWasText) { process.stdout.write(c.cyan("● ")); lastWasText = true; }
       process.stdout.write(tail);
     }
     if (lastWasText) process.stdout.write("\n");
@@ -141,9 +142,8 @@ export async function runAgent({
     totalOut += res.usage?.completion_tokens ?? 0;
     if (typeof res.balanceAfter === "number") lastBalance = res.balanceAfter;
     onTokens({ totalCredits, totalIn, totalOut, balance: lastBalance });
-    process.stdout.write(
-      c.dim(`  ${res.creditsCharged ?? 0} cr · ${res.usage?.prompt_tokens ?? 0}→${res.usage?.completion_tokens ?? 0} tokens · finish: ${res.finish_reason}\n`),
-    );
+    // Per-turn cost line removed for a cleaner look — the session summary at the
+    // end carries the totals.
 
     // Push assistant message into history
     messages.push({
@@ -162,8 +162,9 @@ export async function runAgent({
     for (const call of toolCalls) {
       let args = {};
       try { args = JSON.parse(call.function.arguments || "{}"); } catch { /* leave empty */ }
-      console.log("");
-      console.log(toolLabel(call.function.name, args));
+      // todo_write renders its own Plan box, so it returns an empty label.
+      const label = toolLabel(call.function.name, args);
+      if (label) console.log("\n" + c.cyan("●") + " " + label);
 
       // Route to MCP if the tool name is namespaced (mcp__server__tool);
       // otherwise execute the built-in tool. unnamespaceToolName returns
@@ -181,7 +182,8 @@ export async function runAgent({
       if (call.function.name === "read_file" || call.function.name === "edit_file" || call.function.name === "write_file") {
         if (typeof args.path === "string") referencedPaths.push(args.path);
       }
-      console.log(toolSummary(call.function.name, result));
+      const summary = toolSummary(call.function.name, result);
+      if (summary) console.log(summary);
 
       messages.push({
         role: "tool",
