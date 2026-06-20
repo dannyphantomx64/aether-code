@@ -69,7 +69,7 @@ export function setTerminalTitle(title) {
 // plan) just get a check — the detail was already printed.
 export function toolSummary(name, result) {
   const ok = result.ok;
-  const mark = ok ? c.green("✓") : c.red("✗");
+  const mark = ok ? c.green("●") : c.red("×");
   const out = result.output ?? "";
   const firstLine = out.split("\n").find((l) => l.trim()) ?? "";
 
@@ -136,7 +136,7 @@ export function makeTokenStripper() {
 }
 
 export function toolResult(text, ok = true) {
-  const prefix = ok ? c.green("  ✓ ") : c.red("  ✗ ");
+  const prefix = ok ? c.green("  ● ") : c.red("  × ");
   // First line bold-ish, then dim continuation
   const lines = text.split("\n");
   const head = lines[0].slice(0, 200);

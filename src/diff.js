@@ -30,11 +30,12 @@ export function unifiedDiff(oldText, newText, filename) {
   for (const l of changedNew) lines.push(c.green(`+ ${l}`));
   if (suffix > 0) lines.push(c.gray(`  …${suffix} unchanged line${suffix === 1 ? "" : "s"} below…`));
 
-  // Cap output so massive writes don't flood the terminal
-  if (lines.length > 60) {
-    return [...lines.slice(0, 30), c.gray(`  …${lines.length - 60} more lines hidden…`), ...lines.slice(-30)].join(
-      "\n",
-    );
+  // Cap output so writes don't flood the terminal — a short preview is enough
+  // (skip-permissions auto-applies; the full file is on disk to inspect).
+  const MAX = 14;
+  if (lines.length > MAX) {
+    const shown = lines.slice(0, MAX - 1);
+    return [...shown, c.gray(`  …${lines.length - shown.length} more lines (see the file)…`)].join("\n");
   }
   return lines.join("\n");
 }

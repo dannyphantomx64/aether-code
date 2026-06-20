@@ -787,7 +787,7 @@ function renderTodos(todos) {
   for (const t of todos) {
     const icon =
       t.status === "completed"
-        ? c.green("✓")
+        ? c.green("●")
         : t.status === "in_progress"
           ? c.yellow("→")
           : c.dim("·");

@@ -112,7 +112,7 @@ export async function runSetup() {
     process.stdout.write(c.gray("Verifying..."));
     try {
       const me = await fetchBalance();
-      console.log(c.green(" ✓"));
+      console.log(c.green(" ●"));
       console.log("");
       console.log(c.green(c.bold("Setup complete.")));
       console.log(
@@ -123,7 +123,7 @@ export async function runSetup() {
       saved = true;
       break;
     } catch (err) {
-      console.log(c.red(" ✗"));
+      console.log(c.red(" ×"));
       if (err instanceof AetherError && err.status === 401) {
         console.log(errorLine("Server rejected that key (401). Double-check you copied it correctly."));
       } else {

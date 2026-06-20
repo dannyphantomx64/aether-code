@@ -26,7 +26,7 @@ import {
 import readline from "node:readline";
 import { c, errorLine, divider, setTerminalTitle } from "../src/render.js";
 
-const VERSION = "0.19.0";
+const VERSION = "0.20.0";
 
 /**
  * Try to start MCP servers from ~/.aether/mcp.json. Returns a started
@@ -214,12 +214,12 @@ async function main() {
 
   console.log("\n" + divider());
   if (result.ok) {
-    console.log(c.green(c.bold("✓ Done")) + c.gray(`  ${result.turns} turn${result.turns === 1 ? "" : "s"} · ${result.totalCredits} credits · ${result.totalIn}→${result.totalOut} tokens`));
+    console.log(c.green(c.bold("● Done")) + c.gray(`  ${result.turns} turn${result.turns === 1 ? "" : "s"} · ${result.totalCredits} credits · ${result.totalIn}→${result.totalOut} tokens`));
     if (typeof result.balance === "number") {
       console.log(c.gray(`  balance: ${result.balance.toLocaleString()} credits`));
     }
   } else {
-    console.log(c.red(c.bold("✗ Stopped")) + c.gray(`  ${result.totalCredits} credits used · ${result.totalIn}→${result.totalOut} tokens`));
+    console.log(c.red(c.bold("× Stopped")) + c.gray(`  ${result.totalCredits} credits used · ${result.totalIn}→${result.totalOut} tokens`));
     if (result.error) console.log(errorLine(result.error.message));
   }
   console.log(divider());
@@ -242,14 +242,14 @@ async function handleConfig(rest) {
       process.stderr.write(c.yellow("warning: keys normally start with ak_live_; saving anyway.\n"));
     }
     writeConfigFile({ apiKey: key });
-    console.log(`${c.green("✓")} API key saved to ${CONFIG_PATH}`);
+    console.log(`${c.green("●")} API key saved to ${CONFIG_PATH}`);
     return;
   }
   if (sub === "set-base") {
     const url = rest[1];
     if (!url) die("config set-base: missing URL argument.");
     writeConfigFile({ baseUrl: url });
-    console.log(`${c.green("✓")} Base URL saved.`);
+    console.log(`${c.green("●")} Base URL saved.`);
     return;
   }
   if (sub === "path") {
@@ -342,7 +342,7 @@ async function handleMcp(rest) {
     const cmdArgs = post.slice(1);
     try {
       const entry = addServer({ name, command, args: cmdArgs, env });
-      console.log(`${c.green("✓")} Added MCP server "${c.cyan(name)}".`);
+      console.log(`${c.green("●")} Added MCP server "${c.cyan(name)}".`);
       const argsStr = entry.args && entry.args.length > 0 ? " " + entry.args.join(" ") : "";
       console.log(c.gray(`  ${entry.command}${argsStr}`));
       console.log(c.gray("Restart the agent (or run `aether`) to attach it."));
@@ -357,7 +357,7 @@ async function handleMcp(rest) {
     if (!name) die("aether mcp remove: missing <name>");
     try {
       removeServer({ name });
-      console.log(`${c.green("✓")} Removed MCP server "${c.cyan(name)}".`);
+      console.log(`${c.green("●")} Removed MCP server "${c.cyan(name)}".`);
     } catch (e) {
       die(e.message || String(e));
     }
@@ -430,7 +430,7 @@ async function handleMcp(rest) {
         args: resolved.args,
         env: resolved.env,
       });
-      console.log(`${c.green("✓")} Installed MCP server "${c.cyan(entry.id)}".`);
+      console.log(`${c.green("●")} Installed MCP server "${c.cyan(entry.id)}".`);
       console.log(c.gray(`  ${added.command}${added.args ? " " + added.args.join(" ") : ""}`));
       console.log(c.gray("Restart aether (or run `aether`) to attach it."));
     } catch (e) {
