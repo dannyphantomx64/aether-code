@@ -92,11 +92,40 @@ export function toolSummary(name, result) {
 // Strip model "harmony"/channel control tokens (<|channel|>, <|message|>,
 // <|tool_response|>, <channel|>, …) that occasionally leak into the text
 // stream. Belt-and-suspenders alongside the server-side scrub.
+// Only strips tokens containing a PIPE — the harmony/channel control tokens
+// (<|channel|>, <|tool_response|>, <channel|>) always have one. Real code like
+// <div>, Vec<T>, a < b has no pipe and is left untouched.
+const MODEL_TOKEN_RE = /<\|[a-z_]*\|?>|<[a-z_]+\|>/gi;
+
 export function stripModelTokens(text) {
-  return text
-    .replace(/<\|[a-z_]*\|?>/gi, "")
-    .replace(/<\/?[a-z_]*\|>/gi, "")
-    .replace(/<\|[a-z_]*>/gi, "");
+  return text.replace(MODEL_TOKEN_RE, "");
+}
+
+// Streaming-safe stripper: the leaked tokens (<|channel|>, <|tool_response|>, …)
+// can be split across stream chunks ("<chann" then "el|>"), which a per-delta
+// regex misses. This buffers any trailing "<…" that might be the start of a
+// token and only emits it once it's confirmed not-a-token (or on flush).
+export function makeTokenStripper() {
+  let buf = "";
+  return {
+    push(text) {
+      buf = (buf + text).replace(MODEL_TOKEN_RE, "");
+      const partial = buf.match(/<[|a-z_/]*$/i); // possible token start at the tail
+      if (partial) {
+        const emit = buf.slice(0, partial.index);
+        buf = buf.slice(partial.index);
+        return emit;
+      }
+      const emit = buf;
+      buf = "";
+      return emit;
+    },
+    flush() {
+      const out = buf.replace(MODEL_TOKEN_RE, "");
+      buf = "";
+      return out;
+    },
+  };
 }
 
 export function toolResult(text, ok = true) {

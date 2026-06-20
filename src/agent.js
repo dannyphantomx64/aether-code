@@ -6,7 +6,7 @@ import { agentTurnStream, AetherError } from "./api.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools.js";
 import { unnamespaceToolName } from "./mcp.js";
 import { loadAllSkills, selectSkills, renderSkillsBlock } from "./skills.js";
-import { c, divider, turn, toolLabel, toolSummary, stripModelTokens, errorLine } from "./render.js";
+import { c, divider, turn, toolLabel, toolSummary, makeTokenStripper, errorLine } from "./render.js";
 
 const DEFAULT_MAX_TURNS = 25;
 
@@ -59,6 +59,7 @@ export async function runAgent({
     // calling a particular tool (i.e. the `name` arrives in the stream).
     const announced = new Set();
     let lastWasText = false;
+    const stripper = makeTokenStripper();
 
     // Select skills for this turn against the current user prompt + any
     // paths the model has read so far. Prepend the matching skills' bodies
@@ -73,8 +74,9 @@ export async function runAgent({
         messages: turnMessages,
         tools,
         onDelta: (text) => {
-          // Strip any leaked model channel/control tokens before display.
-          const clean = stripModelTokens(text);
+          // Buffered strip of leaked model channel/control tokens (which can
+          // be split across stream chunks) before display.
+          const clean = stripper.push(text);
           if (!clean) return;
           if (!lastWasText) {
             process.stdout.write("  ");
@@ -100,7 +102,12 @@ export async function runAgent({
       throw err;
     }
 
-    // End-of-turn newline + cost meter
+    // Flush any held-back partial token, then close the line.
+    const tail = stripper.flush();
+    if (tail) {
+      if (!lastWasText) { process.stdout.write("  "); lastWasText = true; }
+      process.stdout.write(tail);
+    }
     if (lastWasText) process.stdout.write("\n");
     totalCredits += res.creditsCharged ?? 0;
     totalIn += res.usage?.prompt_tokens ?? 0;
