@@ -63,7 +63,7 @@ export function toolLabel(name, args) {
     case "write_file":   return `${verb("write")}  ${arg(a.path)}`;
     case "edit_file":    return `${verb("edit")}   ${arg(a.path)}`;
     case "list_dir":     return `${verb("list")}   ${arg(a.path)}`;
-    case "glob_files":   return `${verb("glob")}   ${arg(a.pattern)}`;
+    case "glob_files":   return `${verb("find")}   ${arg(a.pattern)}`;
     case "search_files": return `${verb("search")} ${arg(`/${a.pattern}/ in ${a.path ?? "."}`)}`;
     case "run_shell":    return `${verb("run")}    ${arg(a.command)}`;
     case "web_search":   return `${verb("search web")} ${arg(JSON.stringify(a.query ?? ""))}`;

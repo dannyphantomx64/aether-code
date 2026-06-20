@@ -16,7 +16,7 @@ import { c, errorLine, box } from "./render.js";
 import { checkForUpdate } from "./update-check.js";
 import { promptBox, EXIT_SIGNAL } from "./box-input.js";
 
-const VERSION = "0.24.0";
+const VERSION = "0.25.0";
 const MODEL_NAME = "Aether Core";
 
 const SHORTCUTS = `

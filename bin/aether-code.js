@@ -9,6 +9,8 @@
 
 import process from "node:process";
 import path from "node:path";
+import os from "node:os";
+import fs from "node:fs";
 import { runAgent } from "../src/agent.js";
 import { runRepl } from "../src/repl.js";
 import { runSetup } from "../src/setup.js";
@@ -26,7 +28,7 @@ import {
 import readline from "node:readline";
 import { c, errorLine, divider, setTerminalTitle } from "../src/render.js";
 
-const VERSION = "0.24.0";
+const VERSION = "0.25.0";
 
 /**
  * Try to start MCP servers from ~/.aether/mcp.json. Returns a started
@@ -132,6 +134,18 @@ function die(msg, code = 1) {
   process.exit(code);
 }
 
+// True for Windows system folders we should never write a user's project into.
+function isSystemDir(p) {
+  const low = p.toLowerCase().replace(/[\\/]+$/, "").replace(/\//g, "\\");
+  return (
+    low.endsWith("\\windows\\system32") ||
+    low.endsWith("\\windows\\syswow64") ||
+    low.endsWith("\\windows") ||
+    low.endsWith("\\system32") ||
+    /\\program files( \(x86\))?$/.test(low)
+  );
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   setTerminalTitle("Aether");
@@ -145,7 +159,16 @@ async function main() {
     return;
   }
 
-  const cwd = args.flags.cwd ? path.resolve(args.flags.cwd) : process.cwd();
+  // Where files land. If the user didn't pass --cwd and we were launched from a
+  // Windows system folder (admin cmd opens in C:\WINDOWS\system32), don't dump
+  // their project there — they'd never find it. Work in the Desktop instead.
+  let cwd = args.flags.cwd ? path.resolve(args.flags.cwd) : process.cwd();
+  let redirectedFrom = null;
+  if (!args.flags.cwd && isSystemDir(cwd)) {
+    const desktop = path.join(os.homedir(), "Desktop");
+    const target = fs.existsSync(desktop) ? desktop : os.homedir();
+    if (target.toLowerCase() !== cwd.toLowerCase()) { redirectedFrom = cwd; cwd = target; }
+  }
   // Skip-permissions by DEFAULT (like `claude --dangerously-skip-permissions`):
   // auto-approve writes/shell and don't sandbox file paths, so the agent can
   // just build. Opt back in with --review (y/N before each action) and
@@ -184,6 +207,10 @@ async function main() {
   if (!prompt) {
     if (cwd !== process.cwd()) process.chdir(cwd);
     const mcpManager = await bootMcp();
+    if (redirectedFrom) {
+      console.log(c.gray(`Note: launched from a system folder (${redirectedFrom}).`));
+      console.log(c.gray(`Your files will be saved to ${c.cyan(cwd)} so you can find them. Use ${c.cyan("--cwd <path>")} or ${c.cyan("/cwd")} to change.`));
+    }
     await runRepl({ cwd, autoYes, unsafePaths, maxTurns, mcpManager });
     return;
   }
@@ -198,6 +225,7 @@ async function main() {
   console.log(divider());
   const modeLabel = autoYes && unsafePaths ? " · skip-permissions" : `${autoYes ? " · auto-yes" : " · review"}${unsafePaths ? "" : " · sandboxed"}`;
   console.log(c.magenta(c.bold("aether-code")) + c.gray(` · cwd ${cwd}${modeLabel}`));
+  if (redirectedFrom) console.log(c.gray(`(launched from ${redirectedFrom} — saving to ${cwd} instead)`));
   console.log(c.gray(`task: `) + prompt);
   console.log(divider());
 

@@ -80,6 +80,9 @@ export async function runAgent({
   // Loop guard: count identical (name+args) tool calls across the whole run so a
   // confused model can't burn turns re-running the same call (e.g. glob *.md x9).
   const callCounts = new Map();
+  // Files the run created/edited, shown in a summary at the end so the user
+  // knows exactly what was produced and where to find it.
+  const filesTouched = new Map();
 
   for (let i = 0; i < maxTurns; i++) {
     // No turn header and no leading blank here — each step (assistant text and
@@ -167,6 +170,12 @@ export async function runAgent({
 
     const toolCalls = res.message.tool_calls ?? [];
     if (toolCalls.length === 0) {
+      if (filesTouched.size) {
+        console.log("\n" + c.bold("Files") + c.gray(` in ${cwd}`));
+        for (const [p, action] of filesTouched) {
+          console.log("  " + c.green("●") + " " + p + c.gray(` — ${action}`));
+        }
+      }
       return { ok: true, totalCredits, totalIn, totalOut, turns: i + 1, balance: lastBalance, messages };
     }
 
@@ -217,6 +226,10 @@ export async function runAgent({
       // binary in turn 3 can activate the RE skill in turn 4.
       if (call.function.name === "read_file" || call.function.name === "edit_file" || call.function.name === "write_file") {
         if (typeof args.path === "string") referencedPaths.push(args.path);
+      }
+      if (result.ok && typeof args.path === "string" && (call.function.name === "write_file" || call.function.name === "edit_file")) {
+        const rel = path.relative(cwd, path.resolve(cwd, args.path)) || args.path;
+        filesTouched.set(rel, call.function.name === "write_file" ? "created" : "edited");
       }
       const summary = toolSummary(call.function.name, result);
       if (summary) console.log(summary);
