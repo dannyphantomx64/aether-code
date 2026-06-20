@@ -26,7 +26,7 @@ import {
 import readline from "node:readline";
 import { c, errorLine, divider } from "../src/render.js";
 
-const VERSION = "0.17.0";
+const VERSION = "0.18.0";
 
 /**
  * Try to start MCP servers from ~/.aether/mcp.json. Returns a started
@@ -84,10 +84,11 @@ ${c.bold("EXAMPLES")}
   aether --cwd ./my-project "fix the failing tests"
 
 ${c.bold("FLAGS")}
-  --yes              Auto-approve all writes and shell commands. Use with care.
+  --review           Confirm (y/N) before each write + shell command.
+                     Default is auto-approve (skip-permissions).
+  --sandbox          Restrict file access to --cwd. Default is full access.
   --cwd <path>       Working directory for the agent (default: current dir).
   --max-turns <n>    Maximum turns before stopping (default: 25).
-  --unsafe-paths     Allow the agent to read/write outside cwd.
   --help, -h         Show this help.
   --version, -v      Print version.
 
@@ -96,9 +97,10 @@ ${c.bold("CONFIG")}
   Get a key at ${c.blue("https://trynoguard.com/account")}.
 
 ${c.bold("SAFETY")}
-  - File writes show a unified diff and require y/N confirmation by default.
-  - Shell commands show what's about to run and require y/N confirmation.
-  - Paths are clamped to ${c.cyan("--cwd")} (override with ${c.cyan("--unsafe-paths")}).
+  - By DEFAULT aether runs in skip-permissions mode (like Claude's
+    --dangerously-skip-permissions): it auto-approves file writes + shell
+    commands and can access your whole filesystem, so it just builds.
+  - Use ${c.cyan("--review")} to approve each action, ${c.cyan("--sandbox")} to clamp paths to --cwd.
   - Each shell command has a 2-minute hard timeout.
 
 ${c.gray(`v${VERSION}`)}
@@ -143,8 +145,12 @@ async function main() {
   }
 
   const cwd = args.flags.cwd ? path.resolve(args.flags.cwd) : process.cwd();
-  const autoYes = !!args.flags.yes;
-  const unsafePaths = !!args.flags.unsafePaths;
+  // Skip-permissions by DEFAULT (like `claude --dangerously-skip-permissions`):
+  // auto-approve writes/shell and don't sandbox file paths, so the agent can
+  // just build. Opt back in with --review (y/N before each action) and
+  // --sandbox (clamp file access to --cwd).
+  const autoYes = !args.flags.review;
+  const unsafePaths = !args.flags.sandbox;
   const maxTurns = Number.isInteger(args.flags.maxTurns) ? args.flags.maxTurns : 25;
 
   // Subcommand routing — these shadow the "task as positional arg" mode
@@ -177,7 +183,7 @@ async function main() {
   if (!prompt) {
     if (cwd !== process.cwd()) process.chdir(cwd);
     const mcpManager = await bootMcp();
-    await runRepl({ cwd, autoYes, maxTurns, mcpManager });
+    await runRepl({ cwd, autoYes, unsafePaths, maxTurns, mcpManager });
     return;
   }
 
@@ -189,7 +195,8 @@ async function main() {
   }
 
   console.log(divider());
-  console.log(c.magenta(c.bold("aether-code")) + c.gray(` · cwd ${cwd}${autoYes ? " · auto-yes" : ""}${unsafePaths ? " · unsafe-paths" : ""}`));
+  const modeLabel = autoYes && unsafePaths ? " · skip-permissions" : `${autoYes ? " · auto-yes" : " · review"}${unsafePaths ? "" : " · sandboxed"}`;
+  console.log(c.magenta(c.bold("aether-code")) + c.gray(` · cwd ${cwd}${modeLabel}`));
   console.log(c.gray(`task: `) + prompt);
   console.log(divider());
 

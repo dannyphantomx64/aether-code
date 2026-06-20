@@ -2,6 +2,8 @@
 // in real-time, executes any tool calls, loops until the model returns no
 // tool calls (task done) or max-turns is reached.
 
+import os from "node:os";
+import path from "node:path";
 import { agentTurnStream, AetherError } from "./api.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools.js";
 import { unnamespaceToolName } from "./mcp.js";
@@ -9,6 +11,26 @@ import { loadAllSkills, selectSkills, renderSkillsBlock } from "./skills.js";
 import { c, divider, turn, toolLabel, toolSummary, makeTokenStripper, errorLine } from "./render.js";
 
 const DEFAULT_MAX_TURNS = 25;
+
+// Environment block prepended to the first user message so the model can
+// resolve named locations to real absolute paths.
+function envContext(cwd) {
+  const home = os.homedir();
+  const desktop = path.join(home, "Desktop");
+  const documents = path.join(home, "Documents");
+  return (
+    `[environment]\n` +
+    `os: ${process.platform}\n` +
+    `cwd: ${cwd}\n` +
+    `home: ${home}\n` +
+    `desktop: ${desktop}\n` +
+    `documents: ${documents}\n` +
+    `When the user names a location ("my desktop", "home", "documents"), write to ` +
+    `the matching ABSOLUTE path above (e.g. desktop -> ${desktop}). Otherwise ` +
+    `work under the cwd. Use absolute paths when a specific location is named.\n` +
+    `[/environment]\n\n`
+  );
+}
 
 export async function runAgent({
   initialPrompt,
@@ -43,9 +65,14 @@ export async function runAgent({
   const referencedPaths = [];
   // Two callers: one-shot (initialPrompt only, fresh conversation) and REPL
   // (priorMessages + initialPrompt to continue an ongoing chat).
+  // On the FIRST message of a session, prepend an environment block so the
+  // model knows real absolute paths (cwd / home / desktop). Without it, "build
+  // X on my desktop" became `mkdir X` in whatever dir aether was launched from
+  // (e.g. C:\WINDOWS\system32). Only prepended once — later turns carry it in
+  // history.
   const messages = priorMessages
     ? [...priorMessages, { role: "user", content: initialPrompt }]
-    : [{ role: "user", content: initialPrompt }];
+    : [{ role: "user", content: envContext(cwd) + initialPrompt }];
   let totalCredits = 0;
   let totalIn = 0;
   let totalOut = 0;

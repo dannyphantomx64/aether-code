@@ -789,8 +789,8 @@ function renderTodos(todos) {
       t.status === "completed"
         ? c.green("✓")
         : t.status === "in_progress"
-          ? c.yellow("▶")
-          : c.dim("○");
+          ? c.yellow("→")
+          : c.dim("·");
     const text =
       t.status === "completed"
         ? c.dim(t.content)

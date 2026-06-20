@@ -17,7 +17,7 @@ import { c, errorLine } from "./render.js";
 import { checkForUpdate } from "./update-check.js";
 import { promptBoxed, EXIT_SIGNAL } from "./ink-input.js";
 
-const VERSION = "0.17.0";
+const VERSION = "0.18.0";
 const MODEL_NAME = "Aether Core";
 
 const SHORTCUTS = `
@@ -34,10 +34,11 @@ ${c.gray("Anything else is sent to the agent as your next message.")}
 ${c.gray("Conversation history is kept across messages until you /clear.")}
 `;
 
-export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTurns: initialMaxTurns, mcpManager = null }) {
+export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, unsafePaths: initialUnsafePaths, maxTurns: initialMaxTurns, mcpManager = null }) {
   const state = {
     cwd: initialCwd,
     autoYes: !!initialAutoYes,
+    unsafePaths: !!initialUnsafePaths,
     maxTurns: initialMaxTurns ?? 25,
     messages: [], // accumulates across turns
     balance: null,
@@ -170,6 +171,7 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTur
       priorMessages: state.messages.length > 0 ? state.messages : undefined,
       cwd: state.cwd,
       autoYes: state.autoYes,
+      unsafePaths: state.unsafePaths,
       maxTurns: state.maxTurns,
       mcpManager,
     });
@@ -275,7 +277,7 @@ function printBanner(state) {
   // Brand-coloured rules top + bottom; content is indented with no right
   // border, so nothing can misalign regardless of terminal font/width.
   const rule = c.magenta("─".repeat(W));
-  const mode = state.autoYes ? "auto-yes" : "review mode";
+  const mode = state.autoYes ? (state.unsafePaths ? "skip-permissions" : "auto-yes") : "review mode";
 
   console.log("");
   console.log(rule);
