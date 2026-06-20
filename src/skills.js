@@ -134,6 +134,12 @@ export function loadSkillsFromDir(dir) {
     if (!name.endsWith(".md")) continue;
     const filePath = path.join(dir, name);
     const raw = fs.readFileSync(filePath, "utf8");
+    // Cap skill size: the body is injected into the prompt every turn it
+    // triggers, so a huge file would blow the context window / inflate cost.
+    if (raw.length > 50_000) {
+      process.stderr.write(`  (skipping oversized skill ${name}: ${raw.length} bytes > 50KB)\n`);
+      continue;
+    }
     skills.push(parseSkill(raw, filePath));
   }
   return skills;

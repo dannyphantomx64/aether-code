@@ -279,6 +279,7 @@ const MAX_GLOB_RESULTS = 300;
 // relative path. ** spans directory separators; * does not.
 export function globToRegExp(glob) {
   let re = "";
+  let braceDepth = 0;
   for (let i = 0; i < glob.length; i++) {
     const ch = glob[i];
     if (ch === "*") {
@@ -291,6 +292,16 @@ export function globToRegExp(glob) {
       }
     } else if (ch === "?") {
       re += "[^/]";
+    } else if (ch === "{") {
+      // Brace expansion: {js,ts} -> (js|ts). Common in .gitignore (*.{js,ts});
+      // treating it literally silently failed to ignore those files.
+      re += "(";
+      braceDepth++;
+    } else if (ch === "}" && braceDepth > 0) {
+      re += ")";
+      braceDepth--;
+    } else if (ch === "," && braceDepth > 0) {
+      re += "|";
     } else if ("\\^$+.()|{}[]".includes(ch)) {
       re += "\\" + ch;
     } else {
@@ -430,13 +441,22 @@ async function askUser(args, _opts) {
 function readFile(args, opts) {
   if (typeof args.path !== "string") return { ok: false, output: "path is required" };
   const abs = resolveSafe(args.path, opts);
-  const stat = fs.statSync(abs);
+  let stat;
+  try { stat = fs.statSync(abs); } catch (e) {
+    return { ok: false, output: `Cannot access ${args.path}: ${e.code || e.message}` };
+  }
   if (stat.isDirectory()) return { ok: false, output: `${args.path} is a directory, not a file` };
+  // Block non-regular files (named pipes, sockets, devices) — reading them can
+  // hang forever (no timeout on readFileSync).
+  if (!stat.isFile()) return { ok: false, output: `${args.path} is not a regular file.` };
   if (stat.size > 1_000_000) {
     return { ok: false, output: `File too large (${stat.size} bytes). Aether refuses to read >1MB at once.` };
   }
-  const text = fs.readFileSync(abs, "utf8");
-  return { ok: true, output: text };
+  try {
+    return { ok: true, output: fs.readFileSync(abs, "utf8") };
+  } catch (e) {
+    return { ok: false, output: `Cannot read ${args.path}: ${e.code || e.message}` };
+  }
 }
 
 function listDir(args, opts) {
@@ -497,6 +517,10 @@ function searchFiles(args, opts) {
         } catch { continue; }
         const lines = content.split("\n");
         for (let i = 0; i < lines.length; i++) {
+          // Skip very long lines: the pattern is model-supplied and a
+          // pathological regex on a long line can backtrack catastrophically
+          // (ReDoS) and freeze the single-threaded process.
+          if (lines[i].length > 2000) continue;
           if (regex.test(lines[i])) {
             matches.push({ file: rel, line: i + 1, text: lines[i].slice(0, 300) });
             if (matches.length >= MAX_SEARCH_MATCHES) { truncated = true; return; }
@@ -648,11 +672,32 @@ async function webSearch(args, opts) {
 // Bounded fetch with a fixed timeout + size cap. Strips scripts/styles, removes
 // tags, decodes common HTML entities. Not a full HTML parser; good enough for
 // reading docs pages, GitHub READMEs, MDN, Stack Overflow answers, etc.
+// SSRF guard: refuse loopback / link-local / private hosts so web_fetch can't
+// be steered (directly or via a redirect) at localhost or cloud-metadata
+// (169.254.169.254) or an internal service.
+function isBlockedHost(hostname) {
+  const h = (hostname || "").toLowerCase().replace(/^\[|\]$/g, "");
+  if (!h || h === "localhost" || h === "0.0.0.0" || h === "::1" || h === "::") return true;
+  if (h.endsWith(".localhost") || h.endsWith(".internal") || h.endsWith(".local")) return true;
+  if (/^127\./.test(h)) return true;                       // loopback
+  if (/^10\./.test(h)) return true;                        // private A
+  if (/^192\.168\./.test(h)) return true;                  // private C
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;   // private B
+  if (/^169\.254\./.test(h)) return true;                  // link-local incl. cloud metadata
+  if (/^(fe80:|fc|fd|::ffff:)/.test(h)) return true;       // IPv6 link-local / ULA / mapped
+  return false;
+}
+
 async function webFetch(args, opts) {
   void opts;
   if (typeof args.url !== "string") return { ok: false, output: "url is required" };
   if (!/^https?:\/\//i.test(args.url)) {
     return { ok: false, output: "Only http:// and https:// URLs are allowed." };
+  }
+  let initialHost;
+  try { initialHost = new URL(args.url).hostname; } catch { return { ok: false, output: "Invalid URL." }; }
+  if (isBlockedHost(initialHost)) {
+    return { ok: false, output: "web_fetch blocked: refusing to fetch a private/internal/loopback address." };
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
@@ -674,6 +719,14 @@ async function webFetch(args, opts) {
     return { ok: false, output: `web_fetch error: ${e.name === "AbortError" ? "timed out after 15s" : e.message}` };
   }
   clearTimeout(timeout);
+  // Re-check the FINAL url after any redirects — a public URL can 302 to an
+  // internal target, which the initial-URL check wouldn't catch.
+  try {
+    if (isBlockedHost(new URL(res.url).hostname)) {
+      res.body?.cancel().catch(() => {});
+      return { ok: false, output: "web_fetch blocked: redirect to a private/internal address." };
+    }
+  } catch { /* res.url unparseable — fall through */ }
   if (!res.ok) {
     return { ok: false, output: `web_fetch HTTP ${res.status} ${res.statusText}` };
   }
