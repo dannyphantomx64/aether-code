@@ -8,16 +8,15 @@
 //   - Bottom status line is rendered after each turn
 //   - Ctrl+C: first press cancels in-progress turn, second press exits
 
-import readline from "node:readline";
 import path from "node:path";
 import { runAgent } from "./agent.js";
 import { fetchBalance, AetherError } from "./api.js";
 import { runSetup } from "./setup.js";
 import { c, errorLine, box } from "./render.js";
 import { checkForUpdate } from "./update-check.js";
-import { promptBoxed, EXIT_SIGNAL } from "./ink-input.js";
+import { promptBox, EXIT_SIGNAL } from "./box-input.js";
 
-const VERSION = "0.22.0";
+const VERSION = "0.23.0";
 const MODEL_NAME = "Aether Core";
 
 const SHORTCUTS = `
@@ -85,76 +84,19 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, unsafe
   const updateNudge = await updatePromise;
   if (updateNudge) console.log(updateNudge + "\n");
 
-  // Input: the Ink boxed input (bordered, Claude-style) when the terminal
-  // renders it cleanly, with a readline fallback otherwise.
-  //
-  // The legacy Windows console (cmd.exe / conhost) mishandles Ink's live
-  // redraw + raw-mode: typed characters ghost (the console echoes what Ink
-  // already drew) and the box border tears on each keystroke. Windows Terminal
-  // (sets WT_SESSION) and non-Windows render Ink correctly. So we default to
-  // the clean prompt on legacy Windows console; AETHER_INK=1 forces Ink there
-  // for anyone who wants to try it, AETHER_NO_INK=1 forces the plain prompt.
+  // Input: a bordered raw-mode box (box-input.js) — cmd.exe-safe and identical
+  // everywhere. (Ink's live redraw ghosts in the legacy Windows console, so we
+  // don't use it.) Each prompt is independent; the tool y/N prompts and the
+  // ask_user menu run BETWEEN prompts in raw mode too, so nothing overlaps.
   const inputHistory = [];
-  const legacyWinConsole = process.platform === "win32" && !process.env.WT_SESSION;
-  const useInk =
-    !!process.stdin.isTTY &&
-    process.env.AETHER_NO_INK !== "1" &&
-    (process.env.AETHER_INK === "1" || !legacyWinConsole);
-  let inkBroken = false;
-
-  // The Ink box carries its own status bar; the plain prompt doesn't, so show a
-  // one-line hint up front when we won't be using Ink.
-  if (!useInk) console.log(` ${c.cyan("/help")}${c.dim(" shortcuts")}   ${c.cyan("/exit")}${c.dim(" quit")}\n`);
-
-  // Fresh readline interface PER PROMPT. A single persistent interface
-  // conflicted with the per-confirmation readline interfaces the tools open
-  // during a turn (each [y/N] prompt). When a tool's interface closed it left
-  // the REPL's stdin dead — so after finishing a request aether printed the
-  // prompt and immediately EXITED instead of waiting for the next message.
-  // Opening a fresh one each prompt guarantees only one interface exists at a
-  // time, so the REPL keeps running until the user /exits. Returns EXIT_SIGNAL
-  // on a double Ctrl+C.
-  function readlineQuestion() {
-    return new Promise((resolve) => {
-      const r = readline.createInterface({ input: process.stdin, output: process.stdout, historySize: 200 });
-      let lastSigint = 0;
-      r.on("SIGINT", () => {
-        const now = Date.now();
-        if (now - lastSigint < 1500) { r.close(); resolve(EXIT_SIGNAL); return; }
-        lastSigint = now;
-        process.stdout.write(c.gray(`\n(Press Ctrl+C again within 1.5s to exit, or type ${c.cyan("/exit")})\n`));
-        r.prompt();
-      });
-      r.question(c.magenta("> "), (ans) => { r.close(); resolve(ans); });
-    });
-  }
-
-  // Returns the next raw input line, or EXIT_SIGNAL to quit.
-  async function nextLine() {
-    if (useInk && !inkBroken) {
-      try {
-        return await promptBoxed({
-          statusLeft: ` ${c.cyan("/help")}${c.dim(" shortcuts")}   ${c.cyan("/exit")}${c.dim(" quit")}`,
-          statusRight: `${state.autoYes ? "auto-yes" : "review"} · ${MODEL_NAME}`,
-          history: inputHistory,
-        });
-      } catch {
-        inkBroken = true;
-        console.log(c.gray("(rich input unavailable here — using the basic prompt)"));
-      }
-    }
-    return readlineQuestion();
-  }
 
   while (true) {
-    const raw = await nextLine();
+    const raw = await promptBox({ history: inputHistory });
     if (raw === EXIT_SIGNAL) { console.log(c.gray("bye.")); return; }
     const line = (raw ?? "").trim();
     if (!line) continue;
 
-    // Echo the submitted line so it persists in scrollback (Ink clears its box
-    // region on unmount). Skip in readline mode — the terminal already echoed it.
-    if (useInk && !inkBroken) console.log(c.magenta("> ") + line);
+    // promptBox already echoes "› <line>" on submit, so no echo needed here.
     inputHistory.push(line);
 
     // Slash command?
