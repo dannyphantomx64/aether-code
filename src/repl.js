@@ -17,7 +17,7 @@ import { c, errorLine } from "./render.js";
 import { checkForUpdate } from "./update-check.js";
 import { promptBoxed, EXIT_SIGNAL } from "./ink-input.js";
 
-const VERSION = "0.16.0";
+const VERSION = "0.16.1";
 const MODEL_NAME = "Aether Core";
 
 const SHORTCUTS = `
@@ -91,6 +91,10 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTur
   const useInk = !!process.stdin.isTTY && process.env.AETHER_NO_INK !== "1";
   let inkBroken = false;
   let rl = null;
+
+  // The Ink box carries its own status bar; the plain prompt doesn't, so show a
+  // one-line hint up front when we won't be using Ink.
+  if (!useInk) console.log(` ${c.cyan("/help")}${c.dim(" shortcuts")}   ${c.cyan("/exit")}${c.dim(" quit")}\n`);
 
   function ensureReadline() {
     if (rl) return rl;
@@ -266,13 +270,10 @@ function printBanner(state) {
   console.log(`  ${c.gray(mode)}${state.balance != null ? c.gray(`  ·  ${state.balance.toLocaleString()} credits`) : ""}`);
   console.log(`  ${c.gray(shortenPath(state.cwd, W - 2))}`);
   console.log(rule);
-
-  // Bottom status bar: shortcuts on the left, mode on the right (Claude-style).
-  const left = ` ${c.cyan("/help")}${c.dim(" shortcuts")}   ${c.cyan("/exit")}${c.dim(" quit")}`;
-  const right = `${c.cyan(mode)}${c.dim(" · ")}${c.gray(MODEL_NAME)} `;
-  const gap = Math.max(3, cols - visLen(left) - visLen(right) - 1);
-  console.log(left + " ".repeat(gap) + right);
   console.log("");
+  // No bottom status bar here — the Ink input box renders its own persistent
+  // status bar beneath it (one bar, Claude-style). The readline fallback prints
+  // a one-line hint instead (see runRepl).
 }
 
 function printStatusLine(state) {
