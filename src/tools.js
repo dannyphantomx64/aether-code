@@ -574,7 +574,12 @@ async function editFile(args, opts) {
     return { ok: false, output: "path, find, replace are required" };
   }
   const abs = resolveSafe(args.path, opts);
-  if (!fs.existsSync(abs)) return { ok: false, output: `File not found: ${args.path}` };
+  if (!fs.existsSync(abs)) {
+    return {
+      ok: false,
+      output: `File not found: ${args.path}. It doesn't exist yet — use write_file to CREATE it (edit_file only modifies existing files). Do not retry edit_file on this path.`,
+    };
+  }
   const oldContent = fs.readFileSync(abs, "utf8");
   const occurrences = oldContent.split(args.find).length - 1;
   if (occurrences === 0) {

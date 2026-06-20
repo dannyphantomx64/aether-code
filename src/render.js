@@ -80,6 +80,33 @@ export function setTerminalTitle(title) {
   if (process.stdout.isTTY) process.stdout.write(`\x1b]0;${title}\x07`);
 }
 
+// Live "working…" spinner. Rewrites a single line in place (\r) with a rotating
+// half-circle (Geometric Shapes — same block as ●, so cmd.exe-safe) + elapsed
+// seconds, so the user sees the agent is alive while the model thinks or a slow
+// tool runs. stop() clears the line and restores the cursor. No-op in non-TTY.
+export function startSpinner(label) {
+  if (!process.stdout.isTTY) return { stop: () => {} };
+  const frames = ["◐", "◓", "◑", "◒"];
+  const t0 = Date.now();
+  let i = 0;
+  process.stdout.write("\x1b[?25l"); // hide cursor
+  const render = () => {
+    const s = Math.floor((Date.now() - t0) / 1000);
+    const tail = s > 0 ? c.gray(`  ${s}s`) : "";
+    process.stdout.write(`\r\x1b[K${c.cyan(frames[i % frames.length])} ${c.gray(label + "…")}${tail}`);
+    i++;
+  };
+  render();
+  const timer = setInterval(render, 120);
+  if (typeof timer.unref === "function") timer.unref(); // don't keep the process alive
+  return {
+    stop: () => {
+      clearInterval(timer);
+      process.stdout.write("\r\x1b[K\x1b[?25h"); // clear line + show cursor
+    },
+  };
+}
+
 // Terse one-line result summary instead of dumping raw JSON / file contents.
 // Tools whose handlers already render rich output (diffs, the shell stream, the
 // plan) just get a check — the detail was already printed.

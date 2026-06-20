@@ -8,7 +8,7 @@ import { agentTurnStream, AetherError } from "./api.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools.js";
 import { unnamespaceToolName } from "./mcp.js";
 import { loadAllSkills, selectSkills, renderSkillsBlock } from "./skills.js";
-import { c, divider, turn, toolLabel, toolSummary, makeTokenStripper, errorLine } from "./render.js";
+import { c, divider, turn, toolLabel, toolSummary, makeTokenStripper, errorLine, startSpinner } from "./render.js";
 
 const DEFAULT_MAX_TURNS = 25;
 
@@ -77,6 +77,9 @@ export async function runAgent({
   let totalIn = 0;
   let totalOut = 0;
   let lastBalance = null;
+  // Loop guard: count identical (name+args) tool calls across the whole run so a
+  // confused model can't burn turns re-running the same call (e.g. glob *.md x9).
+  const callCounts = new Map();
 
   for (let i = 0; i < maxTurns; i++) {
     // No turn header and no leading blank here — each step (assistant text and
@@ -98,6 +101,11 @@ export async function runAgent({
     const turnMessages = buildTurnMessages(messages, allSkills, referencedPaths);
 
     let res;
+    // "Thinking" spinner: shown from request-send until the first token or tool
+    // call arrives, so the wait doesn't look dead. Stopped exactly once.
+    const spinner = startSpinner("thinking");
+    let spinStopped = false;
+    const stopSpin = () => { if (!spinStopped) { spinStopped = true; spinner.stop(); } };
     try {
       res = await agentTurnStream({
         messages: turnMessages,
@@ -107,6 +115,7 @@ export async function runAgent({
           // be split across stream chunks) before display.
           const clean = stripper.push(text);
           if (!clean) return;
+          stopSpin();
           if (!lastWasText) {
             process.stdout.write("\n" + c.cyan("● "));
             lastWasText = true;
@@ -118,6 +127,7 @@ export async function runAgent({
           // call — the clean label is printed at execution time, so no noisy
           // "preparing args" placeholder here.
           if (delta.name && !announced.has(delta.index)) {
+            stopSpin();
             announced.add(delta.index);
             if (lastWasText) process.stdout.write("\n");
             lastWasText = false;
@@ -125,11 +135,13 @@ export async function runAgent({
         },
       });
     } catch (err) {
+      stopSpin();
       if (err instanceof AetherError) {
         return { ok: false, error: err, totalCredits, totalIn, totalOut, balance: lastBalance, messages };
       }
       throw err;
     }
+    stopSpin(); // ensure it's cleared even if the turn produced no output
 
     // Flush any held-back partial token, then close the line.
     const tail = stripper.flush();
@@ -167,14 +179,37 @@ export async function runAgent({
       const label = toolLabel(call.function.name, args);
       if (label) console.log("\n" + c.cyan("●") + " " + label);
 
+      // Loop guard — short-circuit a tool call we've already run 3+ times with
+      // the same args, and tell the model to change approach instead of looping.
+      const sig = `${call.function.name}:${call.function.arguments || ""}`;
+      const seen = (callCounts.get(sig) || 0) + 1;
+      callCounts.set(sig, seen);
+      if (seen > 3) {
+        console.log("  " + c.red("└─") + " " + c.gray("skipped (repeated call)"));
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content:
+            "STOP: you have already run this exact tool call 3 times and the result will not change. Do NOT call it again. " +
+            "If you were looking for a file that doesn't exist, create it with write_file. Otherwise change approach or finish and summarize.",
+        });
+        continue;
+      }
+
       // Route to MCP if the tool name is namespaced (mcp__server__tool);
       // otherwise execute the built-in tool. unnamespaceToolName returns
       // null for non-MCP names, which is our cheap dispatch test.
+      const slow = call.function.name === "web_search" || call.function.name === "web_fetch";
+      const tspin = slow ? startSpinner(call.function.name === "web_search" ? "searching the web" : "fetching page") : null;
       let result;
-      if (mcpManager && unnamespaceToolName(call.function.name)) {
-        result = await mcpManager.callTool(call.function.name, args);
-      } else {
-        result = await executeTool(call, { cwd, autoYes, unsafePaths });
+      try {
+        if (mcpManager && unnamespaceToolName(call.function.name)) {
+          result = await mcpManager.callTool(call.function.name, args);
+        } else {
+          result = await executeTool(call, { cwd, autoYes, unsafePaths });
+        }
+      } finally {
+        if (tspin) tspin.stop();
       }
 
       // Track paths the model has touched. Skills with path-pattern triggers
