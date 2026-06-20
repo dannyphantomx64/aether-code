@@ -54,6 +54,7 @@ export function toolLabel(name, args) {
     case "web_search":   return `${verb("search web")} ${arg(JSON.stringify(a.query ?? ""))}`;
     case "web_fetch":    return `${verb("fetch")}  ${arg(a.url)}`;
     case "todo_write":   return ""; // its Plan box is the label
+    case "ask_user":     return ""; // the interactive menu is its display
     default:             return `${verb(name)} ${arg(JSON.stringify(a))}`;
   }
 }
@@ -79,6 +80,7 @@ export function toolSummary(name, result) {
     return `  ${mark} ${c.gray(code === null ? (ok ? "done" : "failed") : `exit ${code}`)}`;
   }
   if (name === "todo_write") return ""; // the Plan box is its own feedback
+  if (name === "ask_user") return ""; // the menu already showed the answer
   if (name === "write_file" || name === "edit_file") {
     // Handler already printed the diff; echo its short status line.
     return `  ${mark} ${c.gray(ellip(firstLine, 100))}`;

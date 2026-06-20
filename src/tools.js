@@ -13,6 +13,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { spawn } from "node:child_process";
 import { c } from "./render.js";
+import { promptChoice } from "./menu.js";
 import { unifiedDiff, summarizeWrite } from "./diff.js";
 import { getConfig } from "./config.js";
 
@@ -194,6 +195,33 @@ export const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "ask_user",
+      description:
+        "Ask the user a single multiple-choice question and wait for their answer. Use this ONLY when the request is genuinely ambiguous AND the answer materially changes what you build — e.g. which platform/framework/language, the scope, or an irreversible decision. Ask BEFORE building when a wrong assumption would waste real work. Give 2–5 concrete options, each with a short description; put the best default first. Do NOT use it for trivial choices, things you can infer, or to confirm permission to act — just build when the task is clear.",
+      parameters: {
+        type: "object",
+        properties: {
+          question: { type: "string", description: "The single, focused question to ask." },
+          options: {
+            type: "array",
+            description: "2–5 options. Each is {label, description}. Best default first.",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string", description: "Short option label." },
+                description: { type: "string", description: "One-line explanation of this option." },
+              },
+              required: ["label"],
+            },
+          },
+        },
+        required: ["question", "options"],
+      },
+    },
+  },
 ];
 
 /* ─────────────────────── Argument validation ─────────────────────── */
@@ -362,6 +390,7 @@ export async function executeTool(call, opts) {
     web_search: () => webSearch(args, opts),
     web_fetch: () => webFetch(args, opts),
     todo_write: () => todoWrite(args, opts),
+    ask_user: () => askUser(args, opts),
   };
   const fn = handlers[name];
   if (!fn) {
@@ -372,6 +401,23 @@ export async function executeTool(call, opts) {
   } catch (e) {
     return { ok: false, output: `${name} failed: ${e.message}` };
   }
+}
+
+// Ask the user a multiple-choice question and block on their answer. Not a
+// permission gate — it runs even in skip-permissions mode, because the model is
+// explicitly requesting input. In a non-TTY the menu auto-picks the first
+// option so scripted runs don't hang.
+async function askUser(args, _opts) {
+  const options = Array.isArray(args.options) ? args.options : [];
+  if (options.length === 0) {
+    return { ok: false, output: "ask_user requires a non-empty options array" };
+  }
+  const choice = await promptChoice({ question: String(args.question || "Which option?"), options });
+  if (!choice) {
+    return { ok: true, output: "The user cancelled the question. Proceed with your best judgment." };
+  }
+  const extra = choice.description ? ` (${choice.description})` : "";
+  return { ok: true, output: `The user chose: ${choice.label}${extra}` };
 }
 
 function readFile(args, opts) {
