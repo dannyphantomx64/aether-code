@@ -17,7 +17,7 @@ import { c, errorLine } from "./render.js";
 import { checkForUpdate } from "./update-check.js";
 import { promptBoxed, EXIT_SIGNAL } from "./ink-input.js";
 
-const VERSION = "0.16.4";
+const VERSION = "0.17.0";
 const MODEL_NAME = "Aether Core";
 
 const SHORTCUTS = `
@@ -100,28 +100,32 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTur
     process.env.AETHER_NO_INK !== "1" &&
     (process.env.AETHER_INK === "1" || !legacyWinConsole);
   let inkBroken = false;
-  let rl = null;
 
   // The Ink box carries its own status bar; the plain prompt doesn't, so show a
   // one-line hint up front when we won't be using Ink.
   if (!useInk) console.log(` ${c.cyan("/help")}${c.dim(" shortcuts")}   ${c.cyan("/exit")}${c.dim(" quit")}\n`);
 
-  function ensureReadline() {
-    if (rl) return rl;
-    rl = readline.createInterface({ input: process.stdin, output: process.stdout, historySize: 200 });
-    let lastSigint = 0;
-    rl.on("SIGINT", () => {
-      const now = Date.now();
-      if (now - lastSigint < 1500) { console.log(c.gray("\nbye.")); rl.close(); process.exit(0); }
-      lastSigint = now;
-      console.log(c.gray(`\n(Press Ctrl+C again within 1.5s to exit, or type ${c.cyan("/exit")})`));
-    });
-    return rl;
-  }
-
+  // Fresh readline interface PER PROMPT. A single persistent interface
+  // conflicted with the per-confirmation readline interfaces the tools open
+  // during a turn (each [y/N] prompt). When a tool's interface closed it left
+  // the REPL's stdin dead — so after finishing a request aether printed the
+  // prompt and immediately EXITED instead of waiting for the next message.
+  // Opening a fresh one each prompt guarantees only one interface exists at a
+  // time, so the REPL keeps running until the user /exits. Returns EXIT_SIGNAL
+  // on a double Ctrl+C.
   function readlineQuestion() {
-    const r = ensureReadline();
-    return new Promise((resolve) => r.question(c.magenta("> "), (ans) => resolve(ans)));
+    return new Promise((resolve) => {
+      const r = readline.createInterface({ input: process.stdin, output: process.stdout, historySize: 200 });
+      let lastSigint = 0;
+      r.on("SIGINT", () => {
+        const now = Date.now();
+        if (now - lastSigint < 1500) { r.close(); resolve(EXIT_SIGNAL); return; }
+        lastSigint = now;
+        process.stdout.write(c.gray(`\n(Press Ctrl+C again within 1.5s to exit, or type ${c.cyan("/exit")})\n`));
+        r.prompt();
+      });
+      r.question(c.magenta("> "), (ans) => { r.close(); resolve(ans); });
+    });
   }
 
   // Returns the next raw input line, or EXIT_SIGNAL to quit.
@@ -143,7 +147,7 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTur
 
   while (true) {
     const raw = await nextLine();
-    if (raw === EXIT_SIGNAL) { console.log(c.gray("bye.")); if (rl) rl.close(); return; }
+    if (raw === EXIT_SIGNAL) { console.log(c.gray("bye.")); return; }
     const line = (raw ?? "").trim();
     if (!line) continue;
 
@@ -155,7 +159,7 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTur
     // Slash command?
     if (line.startsWith("/") || line === "?") {
       const handled = await handleSlash(line, state);
-      if (handled === "exit") { if (rl) rl.close(); return; }
+      if (handled === "exit") return;
       printStatusLine(state);
       continue;
     }
