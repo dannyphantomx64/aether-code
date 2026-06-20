@@ -17,7 +17,7 @@ import { c, errorLine } from "./render.js";
 import { checkForUpdate } from "./update-check.js";
 import { promptBoxed, EXIT_SIGNAL } from "./ink-input.js";
 
-const VERSION = "0.16.1";
+const VERSION = "0.16.2";
 const MODEL_NAME = "Aether Core";
 
 const SHORTCUTS = `
@@ -84,11 +84,21 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, maxTur
   const updateNudge = await updatePromise;
   if (updateNudge) console.log(updateNudge + "\n");
 
-  // Input: the Ink boxed input (bordered, Claude-style) when we have a TTY,
-  // with a readline fallback for non-TTY/CI or if Ink can't init raw mode.
-  // Set AETHER_NO_INK=1 to force the plain prompt.
+  // Input: the Ink boxed input (bordered, Claude-style) when the terminal
+  // renders it cleanly, with a readline fallback otherwise.
+  //
+  // The legacy Windows console (cmd.exe / conhost) mishandles Ink's live
+  // redraw + raw-mode: typed characters ghost (the console echoes what Ink
+  // already drew) and the box border tears on each keystroke. Windows Terminal
+  // (sets WT_SESSION) and non-Windows render Ink correctly. So we default to
+  // the clean prompt on legacy Windows console; AETHER_INK=1 forces Ink there
+  // for anyone who wants to try it, AETHER_NO_INK=1 forces the plain prompt.
   const inputHistory = [];
-  const useInk = !!process.stdin.isTTY && process.env.AETHER_NO_INK !== "1";
+  const legacyWinConsole = process.platform === "win32" && !process.env.WT_SESSION;
+  const useInk =
+    !!process.stdin.isTTY &&
+    process.env.AETHER_NO_INK !== "1" &&
+    (process.env.AETHER_INK === "1" || !legacyWinConsole);
   let inkBroken = false;
   let rl = null;
 
