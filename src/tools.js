@@ -336,7 +336,14 @@ function resolveSafe(rel, opts) {
   const abs = path.isAbsolute(rel) ? path.normalize(rel) : path.resolve(opts.cwd, rel);
   if (!opts.unsafePaths) {
     const cwd = path.resolve(opts.cwd);
-    if (!abs.startsWith(cwd + path.sep) && abs !== cwd) {
+    // Use path.relative (not startsWith) so Windows drive-relative inputs like
+    // "C:evil.txt" — which path.isAbsolute() reports as NON-absolute and
+    // path.resolve() may anchor to a drive's own cwd outside the project — are
+    // caught. A path is inside cwd only if its relative form doesn't climb out
+    // (no leading "..") and isn't itself absolute (different drive/root).
+    const relToCwd = path.relative(cwd, abs);
+    const escapes = relToCwd === ".." || relToCwd.startsWith(".." + path.sep) || path.isAbsolute(relToCwd);
+    if (abs !== cwd && escapes) {
       throw new Error(
         `Refusing to touch path outside cwd: ${abs}\n  Run with --unsafe-paths if you really mean this.`,
       );
@@ -591,11 +598,11 @@ async function editFile(args, opts) {
       output: `\`find\` text appears ${occurrences} times — must be unique. Add more context to disambiguate, or set replace_all: true to replace all ${occurrences}.`,
     };
   }
-  // split/join replaces every occurrence without regex-escaping pitfalls; for
-  // the default single-edit path occurrences === 1 so it's equivalent.
-  const newContent = args.replace_all
-    ? oldContent.split(args.find).join(args.replace)
-    : oldContent.replace(args.find, args.replace);
+  // split/join for BOTH paths: String.replace(str, str) would interpret special
+  // patterns in the replacement ($&, $`, $', $$) and silently corrupt code that
+  // contains them (regex, jQuery $, template strings). split/join is literal.
+  // On the single-edit path occurrences === 1, so it's equivalent + safe.
+  const newContent = oldContent.split(args.find).join(args.replace);
   const rel = path.relative(opts.cwd, abs);
   console.log(c.dim(`edit ${rel}${args.replace_all ? ` (${occurrences} occurrences)` : ""}`));
   console.log(unifiedDiff(oldContent, newContent, rel));

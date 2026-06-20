@@ -83,6 +83,16 @@ export async function runAgent({
   // Files the run created/edited, shown in a summary at the end so the user
   // knows exactly what was produced and where to find it.
   const filesTouched = new Map();
+  // Files the run read — used by the completeness guard to spot files that were
+  // read (e.g. callers in a refactor) but never edited.
+  const filesRead = new Set();
+  // Completeness guard: gemma sometimes reads files then narrates the fix as
+  // text, or refactors one file but forgets the others. If a MODIFICATION task
+  // finishes having read files it never edited, we nudge it once to finish.
+  const MOD_RE =
+    /\b(refactor|fix|add|adds?|change|update|implement|creat|writ|remov|delet|rename|extract|move|replace|build|generate|insert|append|convert|migrat|wire|hook|edit|modif|patch|integrat)/i;
+  const looksLikeModification = MOD_RE.test(initialPrompt);
+  let appliedNothingNudges = 0;
 
   for (let i = 0; i < maxTurns; i++) {
     // No turn header and no leading blank here — each step (assistant text and
@@ -173,6 +183,24 @@ export async function runAgent({
 
     const toolCalls = res.message.tool_calls ?? [];
     if (toolCalls.length === 0) {
+      // Completeness guard: on a modification task, if the model read files it
+      // never edited, it likely either described the fix instead of applying it
+      // (zero edits) or refactored some files but forgot others (partial). Nudge
+      // once (at most) to finish. The "if it needs no change, just finish" escape
+      // keeps a legitimately read-for-context file from forcing a wrong edit.
+      const unedited = [...filesRead].filter((p) => !filesTouched.has(p));
+      if (looksLikeModification && appliedNothingNudges < 1 && (filesTouched.size === 0 ? referencedPaths.length > 0 : unedited.length > 0)) {
+        appliedNothingNudges++;
+        const msg =
+          filesTouched.size === 0
+            ? "You read the file(s) but applied NO changes (no write_file / edit_file). This task asks you to " +
+              "modify code — ACTUALLY APPLY the change now with edit_file/write_file, don't just describe it."
+            : `You edited ${[...filesTouched.keys()].join(", ")} but read ${unedited.join(", ")} without editing ${unedited.length === 1 ? "it" : "them"}. ` +
+              `If the task needs ${unedited.length === 1 ? "that file" : "those files"} changed too (e.g. updating callers/imports after a refactor), do it NOW. ` +
+              `If ${unedited.length === 1 ? "it genuinely needs" : "they genuinely need"} no change, then finish.`;
+        messages.push({ role: "user", content: msg });
+        continue; // give the model another turn to finish
+      }
       if (filesTouched.size) {
         console.log("\n" + c.bold("Files") + c.gray(` in ${cwd}`));
         for (const [p, action] of filesTouched) {
@@ -230,9 +258,13 @@ export async function runAgent({
       if (call.function.name === "read_file" || call.function.name === "edit_file" || call.function.name === "write_file") {
         if (typeof args.path === "string") referencedPaths.push(args.path);
       }
-      if (result.ok && typeof args.path === "string" && (call.function.name === "write_file" || call.function.name === "edit_file")) {
+      if (result.ok && typeof args.path === "string") {
         const rel = path.relative(cwd, path.resolve(cwd, args.path)) || args.path;
-        filesTouched.set(rel, call.function.name === "write_file" ? "created" : "edited");
+        if (call.function.name === "write_file" || call.function.name === "edit_file") {
+          filesTouched.set(rel, call.function.name === "write_file" ? "created" : "edited");
+        } else if (call.function.name === "read_file") {
+          filesRead.add(rel);
+        }
       }
       const summary = toolSummary(call.function.name, result);
       if (summary) console.log(summary);

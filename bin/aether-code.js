@@ -28,7 +28,7 @@ import {
 import readline from "node:readline";
 import { c, errorLine, divider, setTerminalTitle } from "../src/render.js";
 
-const VERSION = "0.27.0";
+const VERSION = "0.28.0";
 
 /**
  * Try to start MCP servers from ~/.aether/mcp.json. Returns a started
@@ -145,6 +145,19 @@ function isSystemDir(p) {
     /\\program files( \(x86\))?$/.test(low)
   );
 }
+
+// Always restore the terminal on exit. The raw-mode input box, the ask_user
+// menu, and the spinner hide the cursor (\x1b[?25l) and set raw mode; if the
+// process dies mid-prompt (an uncaught error, or the MCP SIGINT handler's
+// process.exit(130)) their own cleanup never runs and the user's shell is left
+// with no cursor and no echo. This idempotent backstop fires on every exit.
+function restoreTerminal() {
+  try {
+    if (process.stdout.isTTY) process.stdout.write("\x1b[?25h"); // show cursor
+    if (process.stdin.isTTY && process.stdin.setRawMode) process.stdin.setRawMode(false);
+  } catch { /* terminal already gone — nothing to restore */ }
+}
+process.on("exit", restoreTerminal);
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
