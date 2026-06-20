@@ -39,7 +39,7 @@ const SHORTCUTS = `
   ${c.cyan("/cwd")} ${c.gray("[path]")}    Show or change working directory
   ${c.cyan("/yes")}       Toggle auto-approve mode (skip y/N prompts)
   ${c.cyan("/turns")} ${c.gray("<n>")}     Set max turns per prompt (default 25)
-  ${c.cyan("/model")}     Show current model
+  ${c.cyan("/model")} ${c.gray("[core|ultra|max]")}  Show or switch model (ultra=Opus, max=Grok — premium)
 
 ${c.gray("Anything else is sent to the agent as your next message.")}
 ${c.gray("Conversation history is kept across messages until you /clear.")}

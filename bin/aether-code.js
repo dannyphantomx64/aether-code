@@ -90,6 +90,8 @@ ${c.bold("FLAGS")}
                      Default is auto-approve (skip-permissions).
   --sandbox          Restrict file access to --cwd. Default is full access.
   --cwd <path>       Working directory for the agent (default: current dir).
+  --model <name>     core (default) | ultra (Opus) | max (Grok). Premium models
+                     need purchased credits, else they fall back to Core.
   --max-turns <n>    Maximum turns before stopping (default: 25).
   --help, -h         Show this help.
   --version, -v      Print version.
