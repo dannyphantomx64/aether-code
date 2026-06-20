@@ -6,7 +6,7 @@ import { agentTurnStream, AetherError } from "./api.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools.js";
 import { unnamespaceToolName } from "./mcp.js";
 import { loadAllSkills, selectSkills, renderSkillsBlock } from "./skills.js";
-import { c, divider, turn, toolHeader, toolResult, errorLine } from "./render.js";
+import { c, divider, turn, toolLabel, toolSummary, stripModelTokens, errorLine } from "./render.js";
 
 const DEFAULT_MAX_TURNS = 25;
 
@@ -73,19 +73,23 @@ export async function runAgent({
         messages: turnMessages,
         tools,
         onDelta: (text) => {
+          // Strip any leaked model channel/control tokens before display.
+          const clean = stripModelTokens(text);
+          if (!clean) return;
           if (!lastWasText) {
             process.stdout.write("  ");
             lastWasText = true;
           }
-          process.stdout.write(text);
+          process.stdout.write(clean);
         },
         onToolCallDelta: (delta) => {
-          // Print the tool header once we know the name (first chunk for that index)
+          // Just close the streamed text line when the model starts a tool
+          // call — the clean label is printed at execution time, so no noisy
+          // "preparing args" placeholder here.
           if (delta.name && !announced.has(delta.index)) {
             announced.add(delta.index);
             if (lastWasText) process.stdout.write("\n");
             lastWasText = false;
-            process.stdout.write(c.cyan(c.bold(delta.name)) + c.gray("(...)") + c.gray(" preparing args\n"));
           }
         },
       });
@@ -125,7 +129,7 @@ export async function runAgent({
       let args = {};
       try { args = JSON.parse(call.function.arguments || "{}"); } catch { /* leave empty */ }
       console.log("");
-      console.log(toolHeader(call.function.name, args));
+      console.log(toolLabel(call.function.name, args));
 
       // Route to MCP if the tool name is namespaced (mcp__server__tool);
       // otherwise execute the built-in tool. unnamespaceToolName returns
@@ -143,10 +147,7 @@ export async function runAgent({
       if (call.function.name === "read_file" || call.function.name === "edit_file" || call.function.name === "write_file") {
         if (typeof args.path === "string") referencedPaths.push(args.path);
       }
-      if (result.output) {
-        const preview = result.output.length > 800 ? result.output.slice(0, 800) + "\n…(truncated)" : result.output;
-        console.log(toolResult(preview, result.ok));
-      }
+      console.log(toolSummary(call.function.name, result));
 
       messages.push({
         role: "tool",

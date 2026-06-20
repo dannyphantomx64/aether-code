@@ -35,6 +35,70 @@ export function toolHeader(name, args) {
   return `${c.cyan(c.bold(name))}${c.gray("(")}${c.gray(trimmed)}${c.gray(")")}`;
 }
 
+const ellip = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s || "");
+
+// Clean one-line label for a tool call — a verb + its key argument, instead of
+// dumping raw JSON (which buried file contents / queries in noise).
+export function toolLabel(name, args) {
+  const a = args || {};
+  const verb = (v) => c.cyan(c.bold(v));
+  const arg = (s) => c.gray(ellip(String(s), 72));
+  switch (name) {
+    case "read_file":    return `${verb("read")}   ${arg(a.path)}`;
+    case "write_file":   return `${verb("write")}  ${arg(a.path)}`;
+    case "edit_file":    return `${verb("edit")}   ${arg(a.path)}`;
+    case "list_dir":     return `${verb("list")}   ${arg(a.path)}`;
+    case "glob_files":   return `${verb("glob")}   ${arg(a.pattern)}`;
+    case "search_files": return `${verb("search")} ${arg(`/${a.pattern}/ in ${a.path ?? "."}`)}`;
+    case "run_shell":    return `${verb("run")}    ${arg(a.command)}`;
+    case "web_search":   return `${verb("search web")} ${arg(JSON.stringify(a.query ?? ""))}`;
+    case "web_fetch":    return `${verb("fetch")}  ${arg(a.url)}`;
+    case "todo_write":   return verb("plan");
+    default:             return `${verb(name)} ${arg(JSON.stringify(a))}`;
+  }
+}
+
+// Terse one-line result summary instead of dumping raw JSON / file contents.
+// Tools whose handlers already render rich output (diffs, the shell stream, the
+// plan) just get a check — the detail was already printed.
+export function toolSummary(name, result) {
+  const ok = result.ok;
+  const mark = ok ? c.green("✓") : c.red("✗");
+  const out = result.output ?? "";
+  const firstLine = out.split("\n").find((l) => l.trim()) ?? "";
+
+  if (name === "run_shell") {
+    let code = null;
+    try { code = JSON.parse(out).exit_code; } catch { /* ignore */ }
+    return `  ${mark} ${c.gray(code === null ? (ok ? "done" : "failed") : `exit ${code}`)}`;
+  }
+  if (name === "write_file" || name === "edit_file" || name === "todo_write") {
+    // Handler already printed the diff / plan; echo its short status line.
+    return `  ${mark} ${c.gray(ellip(firstLine, 100))}`;
+  }
+  let summary = "";
+  try {
+    const j = JSON.parse(out);
+    if (Array.isArray(j)) summary = `${j.length} result${j.length === 1 ? "" : "s"}`;
+    else if (Array.isArray(j.files)) summary = `${j.files.length} file${j.files.length === 1 ? "" : "s"}`;
+    else if (Array.isArray(j.matches)) summary = `${j.matches.length} match${j.matches.length === 1 ? "" : "es"}`;
+  } catch { /* not JSON */ }
+  if (!summary) {
+    summary = name === "read_file" ? `${out.split("\n").length} lines` : ellip(firstLine, 100);
+  }
+  return `  ${mark} ${c.gray(summary)}`;
+}
+
+// Strip model "harmony"/channel control tokens (<|channel|>, <|message|>,
+// <|tool_response|>, <channel|>, …) that occasionally leak into the text
+// stream. Belt-and-suspenders alongside the server-side scrub.
+export function stripModelTokens(text) {
+  return text
+    .replace(/<\|[a-z_]*\|?>/gi, "")
+    .replace(/<\/?[a-z_]*\|>/gi, "")
+    .replace(/<\|[a-z_]*>/gi, "");
+}
+
 export function toolResult(text, ok = true) {
   const prefix = ok ? c.green("  ✓ ") : c.red("  ✗ ");
   // First line bold-ish, then dim continuation
