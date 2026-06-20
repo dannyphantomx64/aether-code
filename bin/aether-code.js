@@ -28,7 +28,7 @@ import {
 import readline from "node:readline";
 import { c, errorLine, divider, setTerminalTitle } from "../src/render.js";
 
-const VERSION = "0.30.0";
+const VERSION = "0.31.0";
 
 /**
  * Try to start MCP servers from ~/.aether/mcp.json. Returns a started
@@ -117,6 +117,7 @@ function parseArgs(argv) {
     else if (a === "--help" || a === "-h") { args.flags.help = true; }
     else if (a === "--version" || a === "-v") { args.flags.version = true; }
     else if (a === "--cwd") { args.flags.cwd = argv[++i]; }
+    else if (a === "--model") { args.flags.model = argv[++i]; }
     else if (a === "--max-turns") { args.flags.maxTurns = parseInt(argv[++i], 10); }
     else if (a.startsWith("--")) {
       const eq = a.indexOf("=");
@@ -190,6 +191,12 @@ async function main() {
   const unsafePaths = !args.flags.sandbox;
   const maxTurns = Number.isInteger(args.flags.maxTurns) ? args.flags.maxTurns : 25;
 
+  // --model: core (default), ultra (Opus), max (Grok). Premium models are gated
+  // server-side — without purchased credits the server uses Core regardless.
+  const MODEL_IDS = { core: null, gemma: null, ultra: "claude-opus-4-6", opus: "claude-opus-4-6", max: "grok-4-3", grok: "grok-4-3" };
+  const modelKey = args.flags.model ? String(args.flags.model).toLowerCase() : null;
+  const model = modelKey && modelKey in MODEL_IDS ? MODEL_IDS[modelKey] : (args.flags.model || null);
+
   // Subcommand routing — these shadow the "task as positional arg" mode
   const sub = args._[0]?.toLowerCase();
   if (sub === "login" || sub === "auth") {
@@ -224,7 +231,7 @@ async function main() {
       console.log(c.gray(`Note: launched from a system folder (${redirectedFrom}).`));
       console.log(c.gray(`Your files will be saved to ${c.cyan(cwd)} so you can find them. Use ${c.cyan("--cwd <path>")} or ${c.cyan("/cwd")} to change.`));
     }
-    await runRepl({ cwd, autoYes, unsafePaths, maxTurns, mcpManager });
+    await runRepl({ cwd, autoYes, unsafePaths, maxTurns, model, mcpManager });
     return;
   }
 
@@ -249,6 +256,7 @@ async function main() {
     autoYes,
     unsafePaths,
     maxTurns,
+    model,
     mcpManager,
   });
   if (mcpManager) await mcpManager.shutdown().catch(() => {});

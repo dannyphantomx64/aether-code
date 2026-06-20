@@ -51,6 +51,7 @@ export async function runAgent({
   autoYes = false,
   unsafePaths = false,
   maxTurns = DEFAULT_MAX_TURNS,
+  model = null, // null = server default (gemma). Premium models gated server-side.
   onTokens = () => {},
   // Optional MCPManager. When provided, its tools are merged into the agent's
   // toolset and tool calls prefixed `mcp__` are routed to it instead of the
@@ -135,6 +136,7 @@ export async function runAgent({
       res = await agentTurnStream({
         messages: turnMessages,
         tools,
+        model,
         onDelta: (text) => {
           // Buffered strip of leaked model channel/control tokens (which can
           // be split across stream chunks) before display.

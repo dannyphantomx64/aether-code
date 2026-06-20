@@ -16,8 +16,20 @@ import { c, errorLine, boxLines, sideBySide } from "./render.js";
 import { checkForUpdate } from "./update-check.js";
 import { promptBox, EXIT_SIGNAL } from "./box-input.js";
 
-const VERSION = "0.30.0";
+const VERSION = "0.31.0";
 const MODEL_NAME = "Aether Core";
+
+// /model aliases → { id, name }. id=null = server default (gemma / Aether Core).
+// Premium models are gated SERVER-SIDE: if you haven't purchased credits, the
+// server transparently uses Core instead — selecting one here can't bypass that.
+const MODEL_ALIASES = {
+  core: { id: null, name: "Aether Core" },
+  gemma: { id: null, name: "Aether Core" },
+  ultra: { id: "claude-opus-4-6", name: "Aether Ultra" },
+  opus: { id: "claude-opus-4-6", name: "Aether Ultra" },
+  max: { id: "grok-4-3", name: "Aether Max" },
+  grok: { id: "grok-4-3", name: "Aether Max" },
+};
 
 const SHORTCUTS = `
   ${c.cyan("/help")}      Show this help
@@ -33,12 +45,15 @@ ${c.gray("Anything else is sent to the agent as your next message.")}
 ${c.gray("Conversation history is kept across messages until you /clear.")}
 `;
 
-export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, unsafePaths: initialUnsafePaths, maxTurns: initialMaxTurns, mcpManager = null }) {
+export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, unsafePaths: initialUnsafePaths, maxTurns: initialMaxTurns, model: initialModel = null, mcpManager = null }) {
+  const initialAlias = Object.values(MODEL_ALIASES).find((a) => a.id === initialModel);
   const state = {
     cwd: initialCwd,
     autoYes: !!initialAutoYes,
     unsafePaths: !!initialUnsafePaths,
     maxTurns: initialMaxTurns ?? 25,
+    model: initialModel ?? null,
+    modelName: initialAlias?.name ?? MODEL_NAME,
     messages: [], // accumulates across turns
     balance: null,
     sessionCredits: 0,
@@ -114,6 +129,7 @@ export async function runRepl({ cwd: initialCwd, autoYes: initialAutoYes, unsafe
       cwd: state.cwd,
       autoYes: state.autoYes,
       unsafePaths: state.unsafePaths,
+      model: state.model,
       maxTurns: state.maxTurns,
       mcpManager,
     });
@@ -199,9 +215,24 @@ async function handleSlash(line, state) {
       }
       break;
     }
-    case "model":
-      console.log(c.gray(`model: ${MODEL_NAME} · 1M context · uncensored`));
+    case "model": {
+      const key = (arg || "").trim().toLowerCase();
+      if (!key) {
+        console.log(c.gray(`model: ${state.modelName}`));
+        console.log(c.gray("switch with /model core | ultra | max   (ultra=Opus, max=Grok — premium, need credits)"));
+      } else if (MODEL_ALIASES[key]) {
+        state.model = MODEL_ALIASES[key].id;
+        state.modelName = MODEL_ALIASES[key].name;
+        const premium = state.model !== null;
+        console.log(
+          c.gray(`model → ${c.cyan(state.modelName)}`) +
+            (premium ? c.gray("  (premium — needs purchased credits, else falls back to Core)") : ""),
+        );
+      } else {
+        console.log(errorLine(`Unknown model "${key}". Try: core, ultra, max`));
+      }
       break;
+    }
     default:
       console.log(errorLine(`Unknown command: /${cmd}. Type ${c.cyan("/help")} for shortcuts.`));
   }
@@ -226,7 +257,7 @@ function printBanner(state) {
   const credits = state.balance != null ? `${state.balance.toLocaleString()} credits` : "";
   const left = boxLines(
     [
-      c.bold(c.magenta("aether")) + c.gray("  ·  ") + c.bold(MODEL_NAME) + c.gray("   v" + VERSION),
+      c.bold(c.magenta("aether")) + c.gray("  ·  ") + c.bold(state.modelName) + c.gray("   v" + VERSION),
       c.gray("uncensored AI coding agent"),
       c.gray((credits ? credits + " · " : "") + mode),
       c.gray(shortenPath(state.cwd, 52)),

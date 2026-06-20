@@ -122,6 +122,7 @@ export async function agentTurnStream({
   tools,
   maxTokens,
   temperature,
+  model,
   onDelta,
   onToolCallDelta,
   onFinish,
@@ -150,6 +151,7 @@ export async function agentTurnStream({
         tools,
         max_tokens: maxTokens,
         temperature,
+        ...(model ? { model } : {}),
       }),
     }, { onRetry: defaultOnRetry });
   } catch (e) {
@@ -274,7 +276,7 @@ export async function agentTurnStream({
  * problematic (corporate proxies, weird client setups). The CLI defaults to
  * streaming.
  */
-export async function agentTurn({ messages, tools, maxTokens, temperature }) {
+export async function agentTurn({ messages, tools, maxTokens, temperature, model }) {
   const { apiKey, baseUrl } = getConfig();
   if (!apiKey) {
     throw new AetherError(
@@ -298,6 +300,7 @@ export async function agentTurn({ messages, tools, maxTokens, temperature }) {
         tools,
         max_tokens: maxTokens,
         temperature,
+        ...(model ? { model } : {}),
       }),
     }, { onRetry: defaultOnRetry });
   } catch (e) {
