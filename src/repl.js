@@ -16,7 +16,7 @@ import { c, errorLine, boxLines, sideBySide } from "./render.js";
 import { checkForUpdate } from "./update-check.js";
 import { promptBox, EXIT_SIGNAL } from "./box-input.js";
 
-const VERSION = "0.31.0";
+const VERSION = "0.32.0";
 const MODEL_NAME = "Aether Core";
 
 // /model aliases → { id, name }. id=null = server default (gemma / Aether Core).
@@ -27,8 +27,6 @@ const MODEL_ALIASES = {
   gemma: { id: null, name: "Aether Core" },
   ultra: { id: "claude-opus-4-6", name: "Aether Ultra" },
   opus: { id: "claude-opus-4-6", name: "Aether Ultra" },
-  max: { id: "grok-4-3", name: "Aether Max" },
-  grok: { id: "grok-4-3", name: "Aether Max" },
 };
 
 const SHORTCUTS = `
@@ -39,7 +37,7 @@ const SHORTCUTS = `
   ${c.cyan("/cwd")} ${c.gray("[path]")}    Show or change working directory
   ${c.cyan("/yes")}       Toggle auto-approve mode (skip y/N prompts)
   ${c.cyan("/turns")} ${c.gray("<n>")}     Set max turns per prompt (default 25)
-  ${c.cyan("/model")} ${c.gray("[core|ultra|max]")}  Show or switch model (ultra=Opus, max=Grok — premium)
+  ${c.cyan("/model")} ${c.gray("[core|ultra]")}  Show or switch model (ultra=Opus — premium)
 
 ${c.gray("Anything else is sent to the agent as your next message.")}
 ${c.gray("Conversation history is kept across messages until you /clear.")}
@@ -219,7 +217,7 @@ async function handleSlash(line, state) {
       const key = (arg || "").trim().toLowerCase();
       if (!key) {
         console.log(c.gray(`model: ${state.modelName}`));
-        console.log(c.gray("switch with /model core | ultra | max   (ultra=Opus, max=Grok — premium, need credits)"));
+        console.log(c.gray("switch with /model core | ultra   (ultra=Opus — premium, need credits)"));
       } else if (MODEL_ALIASES[key]) {
         state.model = MODEL_ALIASES[key].id;
         state.modelName = MODEL_ALIASES[key].name;
@@ -229,7 +227,7 @@ async function handleSlash(line, state) {
             (premium ? c.gray("  (premium — needs purchased credits, else falls back to Core)") : ""),
         );
       } else {
-        console.log(errorLine(`Unknown model "${key}". Try: core, ultra, max`));
+        console.log(errorLine(`Unknown model "${key}". Try: core, ultra`));
       }
       break;
     }

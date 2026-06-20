@@ -28,7 +28,7 @@ import {
 import readline from "node:readline";
 import { c, errorLine, divider, setTerminalTitle } from "../src/render.js";
 
-const VERSION = "0.31.0";
+const VERSION = "0.32.0";
 
 /**
  * Try to start MCP servers from ~/.aether/mcp.json. Returns a started
@@ -90,8 +90,8 @@ ${c.bold("FLAGS")}
                      Default is auto-approve (skip-permissions).
   --sandbox          Restrict file access to --cwd. Default is full access.
   --cwd <path>       Working directory for the agent (default: current dir).
-  --model <name>     core (default) | ultra (Opus) | max (Grok). Premium models
-                     need purchased credits, else they fall back to Core.
+  --model <name>     core (default) | ultra (Opus). Premium models need
+                     purchased credits, else they fall back to Core.
   --max-turns <n>    Maximum turns before stopping (default: 25).
   --help, -h         Show this help.
   --version, -v      Print version.
@@ -193,9 +193,9 @@ async function main() {
   const unsafePaths = !args.flags.sandbox;
   const maxTurns = Number.isInteger(args.flags.maxTurns) ? args.flags.maxTurns : 25;
 
-  // --model: core (default), ultra (Opus), max (Grok). Premium models are gated
+  // --model: core (default) or ultra (Opus). Premium models are gated
   // server-side — without purchased credits the server uses Core regardless.
-  const MODEL_IDS = { core: null, gemma: null, ultra: "claude-opus-4-6", opus: "claude-opus-4-6", max: "grok-4-3", grok: "grok-4-3" };
+  const MODEL_IDS = { core: null, gemma: null, ultra: "claude-opus-4-6", opus: "claude-opus-4-6" };
   const modelKey = args.flags.model ? String(args.flags.model).toLowerCase() : null;
   const model = modelKey && modelKey in MODEL_IDS ? MODEL_IDS[modelKey] : (args.flags.model || null);
 
