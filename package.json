@@ -1,6 +1,6 @@
 {
   "name": "aether-code",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "Uncensored AI coding agent for your terminal — Claude Code alternative with MCP support. Reads code, writes files, runs commands. Drives IDA Pro, Roblox Studio, Wireshark, Blender, and any MCP server. No refusal layer.",
   "homepage": "https://trynoguard.com",
   "repository": {

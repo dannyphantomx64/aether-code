@@ -26,17 +26,35 @@ export function divider() {
 
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
-// Draw a bordered box around content lines. Light box-drawing chars — same
-// Unicode block as the rules we already render, so it's safe in cmd.exe.
-export function box(lines, { color = c.gray, padX = 2 } = {}) {
-  const inner = Math.max(0, ...lines.map((l) => stripAnsi(l).length));
+// Draw a bordered box around content lines, returning the rows as an array (so
+// boxes can be composed side by side). Rounded box-drawing chars.
+export function boxLines(lines, { color = c.gray, padX = 2, minInner = 0 } = {}) {
+  const inner = Math.max(minInner, 0, ...lines.map((l) => stripAnsi(l).length));
   const w = inner + padX * 2;
   const top = color("╭" + "─".repeat(w) + "╮");
   const bot = color("╰" + "─".repeat(w) + "╯");
   const mid = lines.map(
     (l) => color("│") + " ".repeat(padX) + l + " ".repeat(inner - stripAnsi(l).length + padX) + color("│"),
   );
-  return [top, ...mid, bot].join("\n");
+  return [top, ...mid, bot];
+}
+
+export function box(lines, opts) {
+  return boxLines(lines, opts).join("\n");
+}
+
+// Join two blocks of lines horizontally with a gap, padding the left block to a
+// uniform width so the right block aligns. Shorter block is padded with blanks.
+export function sideBySide(a, b, gap = 3) {
+  const wa = Math.max(0, ...a.map((l) => stripAnsi(l).length));
+  const h = Math.max(a.length, b.length);
+  const out = [];
+  for (let i = 0; i < h; i++) {
+    const la = a[i] ?? "";
+    const lb = b[i] ?? "";
+    out.push(la + " ".repeat(wa - stripAnsi(la).length + gap) + lb);
+  }
+  return out.join("\n");
 }
 
 export function turn(n) {

@@ -28,7 +28,7 @@ import {
 import readline from "node:readline";
 import { c, errorLine, divider, setTerminalTitle } from "../src/render.js";
 
-const VERSION = "0.25.0";
+const VERSION = "0.26.0";
 
 /**
  * Try to start MCP servers from ~/.aether/mcp.json. Returns a started

@@ -12,11 +12,11 @@ import path from "node:path";
 import { runAgent } from "./agent.js";
 import { fetchBalance, AetherError } from "./api.js";
 import { runSetup } from "./setup.js";
-import { c, errorLine, box } from "./render.js";
+import { c, errorLine, boxLines, sideBySide } from "./render.js";
 import { checkForUpdate } from "./update-check.js";
 import { promptBox, EXIT_SIGNAL } from "./box-input.js";
 
-const VERSION = "0.25.0";
+const VERSION = "0.26.0";
 const MODEL_NAME = "Aether Core";
 
 const SHORTCUTS = `
@@ -213,16 +213,40 @@ async function handleSlash(line, state) {
 const visLen = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").length;
 const shortenPath = (p, max) => (p.length <= max ? p : "..." + p.slice(p.length - max + 3));
 
+// Short, hand-curated highlights shown in the "What's new" box. Update with
+// notable releases — keep it to ~3 lines so it balances the banner height.
+const WHATS_NEW = [
+  "Files now save to your Desktop",
+  "Live thinking spinner + loop guard",
+  "Asks you when a task is unclear",
+];
+
 function printBanner(state) {
   const mode = state.autoYes ? (state.unsafePaths ? "skip-permissions" : "auto-yes") : "review mode";
-  const credits = state.balance != null ? `${state.balance.toLocaleString()} credits · ` : "";
-  const lines = [
-    c.bold(c.magenta("aether")) + c.gray("  ·  ") + c.bold(MODEL_NAME) + c.gray("   v" + VERSION),
-    c.gray("1M context · uncensored · " + mode),
-    c.gray(credits + shortenPath(state.cwd, 52)),
-  ];
+  const credits = state.balance != null ? `${state.balance.toLocaleString()} credits` : "";
+  const left = boxLines(
+    [
+      c.bold(c.magenta("aether")) + c.gray("  ·  ") + c.bold(MODEL_NAME) + c.gray("   v" + VERSION),
+      c.gray("uncensored AI coding agent"),
+      c.gray((credits ? credits + " · " : "") + mode),
+      c.gray(shortenPath(state.cwd, 52)),
+    ],
+    { color: c.magenta, padX: 2 },
+  );
+  const right = boxLines(
+    [c.bold(c.cyan("What's new")), ...WHATS_NEW.map((s) => c.gray("• " + s))],
+    { color: c.cyan, padX: 2 },
+  );
+
   console.log("");
-  console.log(box(lines, { color: c.magenta, padX: 2 }));
+  const cols = process.stdout.columns || 80;
+  // Only place the two boxes side by side when there's room; otherwise the
+  // banner alone (narrow terminals would wrap and tear the second box).
+  if (cols >= visLen(left[0]) + visLen(right[0]) + 4) {
+    console.log(sideBySide(left, right, 3));
+  } else {
+    console.log(left.join("\n"));
+  }
   console.log("");
 }
 
